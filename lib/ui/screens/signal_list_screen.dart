@@ -1,0 +1,118 @@
+import 'package:flutter/material.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/ui/theme/lb_theme.dart';
+import 'package:littlebrother/ui/widgets/signal_tile.dart';
+
+class SignalListScreen extends StatefulWidget {
+  final List<LBSignal> signals;
+
+  const SignalListScreen({super.key, required this.signals});
+
+  @override
+  State<SignalListScreen> createState() => _SignalListScreenState();
+}
+
+class _SignalListScreenState extends State<SignalListScreen>
+    with SingleTickerProviderStateMixin {
+
+  late TabController _tabs;
+  String _sortBy = 'rssi'; // rssi | risk | name
+
+  final _tabTypes = [
+    (label: 'ALL',  type: null),
+    (label: 'Wi-Fi', type: LBSignalType.wifi),
+    (label: 'BLE',   type: LBSignalType.ble),
+    (label: 'CELL',  type: LBSignalType.cell),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: _tabTypes.length, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  List<LBSignal> _filtered(String? type) {
+    var list = type == null
+        ? widget.signals.where((s) => s.identifier != 'DOWNGRADE_EVENT').toList()
+        : widget.signals.where((s) => s.signalType == type).toList();
+
+    switch (_sortBy) {
+      case 'rssi': list.sort((a, b) => b.rssi.compareTo(a.rssi));
+      case 'risk': list.sort((a, b) => b.riskScore.compareTo(a.riskScore));
+      case 'name': list.sort((a, b) => a.displayName.compareTo(b.displayName));
+    }
+    return list;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: LBColors.background,
+      appBar: AppBar(
+        title: const Text('SIGNALS'),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.sort, size: 18, color: LBColors.blue),
+            color: LBColors.surface,
+            onSelected: (v) => setState(() => _sortBy = v),
+            itemBuilder: (_) => [
+              _menuItem('rssi', 'Sort by RSSI'),
+              _menuItem('risk', 'Sort by Risk'),
+              _menuItem('name', 'Sort by Name'),
+            ],
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabs,
+          labelColor: LBColors.cyan,
+          unselectedLabelColor: LBColors.dimText,
+          indicatorColor: LBColors.blue,
+          labelStyle: LBTextStyles.label.copyWith(fontSize: 11, letterSpacing: 1),
+          tabs: _tabTypes
+              .map((t) => Tab(
+                    text: t.label,
+                    height: 36,
+                  ))
+              .toList(),
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabs,
+        children: _tabTypes
+            .map((t) => _buildList(_filtered(t.type)))
+            .toList(),
+      ),
+    );
+  }
+
+  Widget _buildList(List<LBSignal> signals) {
+    if (signals.isEmpty) {
+      return Center(
+        child: Text(
+          'NO SIGNALS',
+          style: LBTextStyles.label.copyWith(letterSpacing: 2),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: signals.length,
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, thickness: 1, color: LBColors.border),
+      itemBuilder: (ctx, i) => SignalTile(signal: signals[i]),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String value, String label) =>
+      PopupMenuItem(
+        value: value,
+        child: Text(label, style: LBTextStyles.body),
+      );
+}

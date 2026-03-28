@@ -1,0 +1,2418 @@
+<!-- Create full project directory structure -->
+bash
+mkdir -p /home/claude/littlebrother/{android/app/src/main/{kotlin/art/n0v4/littlebrother,res/values},lib/{core/{db,models,constants},modules/{wifi,ble,cell,gps},analyzer,alerts,opsec,ui/{radar,screens,widgets,theme}},assets/oui,test}
+
+Output
+exit code 0
+
+---
+
+<!-- pubspec.yaml - all dependencies -->
+name: littlebrother
+description: Passive RF intelligence platform — Wi-Fi, BLE, cellular SIGINT and IMSI detection.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Radio scanning ─────────────────────────────────────────────────────
+  flutter_blue_plus: ^1.32.12       # BLE passive scan
+  wifi_scan: ^0.4.1                 # Wi-Fi AP enumeration
+  geolocator: ^12.0.0               # GPS positioning
+
+  # ── Storage ────────────────────────────────────────────────────────────
+  sqflite: ^2.3.3                   # Local SQLite
+  path_provider: ^2.1.4             # App data directory
+  path: ^1.9.0
+
+  # ── UI / rendering ─────────────────────────────────────────────────────
+  fl_chart: ^0.69.0                 # RSSI history graphs
+  flutter_local_notifications: ^18.0.0  # Threat alerts + foreground service
+
+  # ── Permissions ────────────────────────────────────────────────────────
+  permission_handler: ^11.3.1
+
+  # ── Export / share ─────────────────────────────────────────────────────
+  share_plus: ^10.0.0
+  csv: ^6.0.0
+
+  # ── Utilities ──────────────────────────────────────────────────────────
+  uuid: ^4.4.2
+  intl: ^0.19.0
+  collection: ^1.18.0
+  crypto: ^3.0.3                    # geohash + fingerprinting
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  mockito: ^5.4.4
+  build_runner: ^2.4.12
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/oui/oui_table.json     # IEEE OUI lookup table (build-time generated)
+
+---
+
+<!-- Android manifest with all required permissions -->
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="art.n0v4.littlebrother">
+
+    <!-- ── Wi-Fi permissions ──────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- ── BLE permissions (API 31+) ─────────────────────────────────── -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Legacy BLE (API < 31) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
+    <!-- ── Cellular / telephony ──────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ── OPSEC / system controls ───────────────────────────────────── -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ── Foreground service (background scanning) ───────────────────── -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ── Hardware features ─────────────────────────────────────────── -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
+    <application
+        android:label="LittleBrother"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground scan service -->
+        <service
+            android:name=".ScanForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- Notification channels setup -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="lb_threats" />
+
+    </application>
+</manifest>
+
+---
+
+<!-- MainActivity.kt - Flutter entry + platform channel registration -->
+package art.n0v4.littlebrother
+
+import android.content.Context
+import android.content.Intent
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.provider.Settings
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {
+
+    companion object {
+        const val CHANNEL_CELL    = "art.n0v4.littlebrother/cell"
+        const val CHANNEL_OPSEC   = "art.n0v4.littlebrother/opsec"
+        const val CHANNEL_WAKE    = "art.n0v4.littlebrother/wake"
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+
+        // ── Cell channel ──────────────────────────────────────────────────
+        val cellHandler = CellChannelHandler(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_CELL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getAllCellInfo"         -> cellHandler.getAllCellInfo(result)
+                    "getServiceState"        -> cellHandler.getServiceState(result)
+                    "getPhysicalChannels"    -> cellHandler.getPhysicalChannels(result)
+                    else                     -> result.notImplemented()
+                }
+            }
+
+        // ── OPSEC channel ─────────────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_OPSEC)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setAirplaneMode" -> {
+                        val enable = call.argument<Boolean>("enable") ?: false
+                        setAirplaneMode(enable, result)
+                    }
+                    "setWifiEnabled" -> {
+                        val enable = call.argument<Boolean>("enable") ?: false
+                        setWifiEnabled(enable, result)
+                    }
+                    "canWriteSettings" -> {
+                        result.success(Settings.System.canWrite(this))
+                    }
+                    "requestWriteSettings" -> {
+                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
+                        startActivity(intent)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── Wake channel ──────────────────────────────────────────────────
+        val wakeHandler = WakeLockHandler(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_WAKE)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "acquire" -> { wakeHandler.acquire(); result.success(null) }
+                    "release" -> { wakeHandler.release(); result.success(null) }
+                    else      -> result.notImplemented()
+                }
+            }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setAirplaneMode(enable: Boolean, result: MethodChannel.Result) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.System.canWrite(this)) {
+                    result.error("NO_PERMISSION", "WRITE_SETTINGS not granted", null)
+                    return
+                }
+            }
+            Settings.Global.putInt(
+                contentResolver,
+                Settings.Global.AIRPLANE_MODE_ON,
+                if (enable) 1 else 0
+            )
+            val intent = Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED)
+            intent.putExtra("state", enable)
+            sendBroadcast(intent)
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("OPSEC_ERROR", e.message, null)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setWifiEnabled(enable: Boolean, result: MethodChannel.Result) {
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+: can't programmatically toggle; open panel instead
+                val intent = Intent(Settings.Panel.ACTION_WIFI)
+                startActivity(intent)
+                result.success(false) // false = user must confirm
+            } else {
+                wifiManager.isWifiEnabled = enable
+                result.success(true)
+            }
+        } catch (e: Exception) {
+            result.error("WIFI_ERROR", e.message, null)
+        }
+    }
+}
+
+---
+
+<!-- CellChannelHandler.kt - full TelephonyManager integration -->
+package art.n0v4.littlebrother
+
+import android.content.Context
+import android.os.Build
+import android.telephony.*
+import androidx.annotation.RequiresApi
+import io.flutter.plugin.common.MethodChannel
+
+class CellChannelHandler(private val context: Context) {
+
+    private val telephonyManager: TelephonyManager by lazy {
+        context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+    }
+
+    fun getAllCellInfo(result: MethodChannel.Result) {
+        try {
+            val cells = telephonyManager.allCellInfo ?: run {
+                result.success(emptyList<Map<String, Any>>())
+                return
+            }
+            val output = cells.mapNotNull { parseCellInfo(it) }
+            result.success(output)
+        } catch (e: SecurityException) {
+            result.error("PERMISSION_DENIED", "READ_PHONE_STATE required", null)
+        } catch (e: Exception) {
+            result.error("CELL_ERROR", e.message, null)
+        }
+    }
+
+    fun getServiceState(result: MethodChannel.Result) {
+        try {
+            val state = mutableMapOf<String, Any>()
+            state["dataNetworkType"] = telephonyManager.dataNetworkType
+            state["voiceNetworkType"] = telephonyManager.voiceNetworkType
+            state["networkTypeName"] = networkTypeName(telephonyManager.dataNetworkType)
+            state["isRoaming"] = telephonyManager.isNetworkRoaming
+            state["operatorName"] = telephonyManager.networkOperatorName ?: ""
+            state["operator"] = telephonyManager.networkOperator ?: ""
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                state["signalStrength"] = parseSignalStrength(telephonyManager.signalStrength)
+            }
+            result.success(state)
+        } catch (e: Exception) {
+            result.error("SERVICE_STATE_ERROR", e.message, null)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun getPhysicalChannels(result: MethodChannel.Result) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                result.success(emptyList<Map<String, Any>>())
+                return
+            }
+            // PhysicalChannelConfig requires API 28+ for basic, 30+ for band info
+            result.success(emptyList<Map<String, Any>>()) // placeholder — needs listener
+        } catch (e: Exception) {
+            result.error("CHANNEL_CONFIG_ERROR", e.message, null)
+        }
+    }
+
+    // ── Cell info parsers ──────────────────────────────────────────────────
+
+    private fun parseCellInfo(cell: CellInfo): Map<String, Any>? {
+        val base = mutableMapOf<String, Any>(
+            "isServing"     to cell.isRegistered,
+            "timestampNanos" to cell.timeStamp,
+        )
+
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cell is CellInfoNr -> parseNr(cell, base)
+            cell is CellInfoLte  -> parseLte(cell, base)
+            cell is CellInfoWcdma -> parseWcdma(cell, base)
+            cell is CellInfoGsm  -> parseGsm(cell, base)
+            cell is CellInfoCdma -> parseCdma(cell, base)
+            else -> null
+        }
+    }
+
+    private fun parseLte(cell: CellInfoLte, base: MutableMap<String, Any>): Map<String, Any> {
+        val id = cell.cellIdentity
+        val sig = cell.cellSignalStrength
+
+        base["type"] = "LTE"
+        base["mcc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mccString ?: "" else id.mcc.toString()
+        base["mnc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mncString ?: "" else id.mnc.toString()
+        base["tac"] = id.tac
+        base["ci"] = id.ci       // Cell Identity (28-bit)
+        base["pci"] = id.pci     // Physical Cell ID (0–503)
+        base["earfcn"] = id.earfcn
+        base["bandwidth"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) id.bandwidth else -1
+        base["rssi"] = sig.rssi
+        base["rsrp"] = sig.rsrp  // Reference Signal Received Power (dBm)
+        base["rsrq"] = sig.rsrq  // Reference Signal Received Quality (dB)
+        base["rssnr"] = sig.rssnr
+        base["cqi"] = sig.cqi
+        base["timingAdvance"] = sig.timingAdvance
+        base["level"] = sig.level
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            base["band"] = id.bands.firstOrNull() ?: -1
+        }
+        // Composite cell ID for DB keying
+        base["cellKey"] = "${base["mcc"]}-${base["mnc"]}-${base["tac"]}-${base["ci"]}"
+        return base
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun parseNr(cell: CellInfoNr, base: MutableMap<String, Any>): Map<String, Any> {
+        val id = cell.cellIdentity as CellIdentityNr
+        val sig = cell.cellSignalStrength as CellSignalStrengthNr
+
+        base["type"] = "NR"
+        base["mcc"] = id.mccString ?: ""
+        base["mnc"] = id.mncString ?: ""
+        base["tac"] = id.tac
+        base["nci"] = id.nci    // NR Cell Identity (36-bit)
+        base["pci"] = id.pci
+        base["arfcn"] = id.nrarfcn
+        base["ssRsrp"] = sig.ssRsrp
+        base["ssRsrq"] = sig.ssRsrq
+        base["ssSinr"] = sig.ssSinr
+        base["csiRsrp"] = sig.csiRsrp
+        base["csiRsrq"] = sig.csiRsrq
+        base["level"] = sig.level
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            base["band"] = id.bands.firstOrNull() ?: -1
+        }
+        base["cellKey"] = "${base["mcc"]}-${base["mnc"]}-${base["tac"]}-${base["nci"]}"
+        return base
+    }
+
+    private fun parseWcdma(cell: CellInfoWcdma, base: MutableMap<String, Any>): Map<String, Any> {
+        val id = cell.cellIdentity
+        val sig = cell.cellSignalStrength
+
+        base["type"] = "UMTS"
+        base["mcc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mccString ?: "" else id.mcc.toString()
+        base["mnc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mncString ?: "" else id.mnc.toString()
+        base["lac"] = id.lac
+        base["cid"] = id.cid
+        base["psc"] = id.psc   // Primary Scrambling Code
+        base["uarfcn"] = id.uarfcn
+        base["rssi"] = sig.dbm
+        base["level"] = sig.level
+        base["cellKey"] = "${base["mcc"]}-${base["mnc"]}-${base["lac"]}-${base["cid"]}"
+        return base
+    }
+
+    private fun parseGsm(cell: CellInfoGsm, base: MutableMap<String, Any>): Map<String, Any> {
+        val id = cell.cellIdentity
+        val sig = cell.cellSignalStrength
+
+        base["type"] = "GSM"
+        base["mcc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mccString ?: "" else id.mcc.toString()
+        base["mnc"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) id.mncString ?: "" else id.mnc.toString()
+        base["lac"] = id.lac
+        base["cid"] = id.cid
+        base["arfcn"] = id.arfcn
+        base["bsic"] = id.bsic  // Base Station Identity Code
+        base["rssi"] = sig.dbm
+        base["bitErrorRate"] = sig.bitErrorRate
+        base["level"] = sig.level
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            base["timingAdvance"] = sig.timingAdvance
+        }
+        base["cellKey"] = "${base["mcc"]}-${base["mnc"]}-${base["lac"]}-${base["cid"]}"
+        return base
+    }
+
+    private fun parseCdma(cell: CellInfoCdma, base: MutableMap<String, Any>): Map<String, Any> {
+        val id = cell.cellIdentity
+        val sig = cell.cellSignalStrength
+
+        base["type"] = "CDMA"
+        base["networkId"] = id.networkId
+        base["systemId"] = id.systemId
+        base["basestationId"] = id.basestationId
+        base["cdmaDbm"] = sig.cdmaDbm
+        base["cdmaEcio"] = sig.cdmaEcio
+        base["evdoDbm"] = sig.evdoDbm
+        base["level"] = sig.level
+        base["cellKey"] = "CDMA-${base["systemId"]}-${base["networkId"]}-${base["basestationId"]}"
+        return base
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun parseSignalStrength(sig: SignalStrength?): Map<String, Any> {
+        if (sig == null) return emptyMap()
+        return mapOf(
+            "level" to sig.level,
+            "dbm" to sig.getCellSignalStrengths<CellSignalStrength>().firstOrNull()?.dbm.let { it ?: -1 }
+        )
+    }
+
+    private fun networkTypeName(type: Int): String = when (type) {
+        TelephonyManager.NETWORK_TYPE_NR      -> "NR"
+        TelephonyManager.NETWORK_TYPE_LTE     -> "LTE"
+        TelephonyManager.NETWORK_TYPE_HSPAP,
+        TelephonyManager.NETWORK_TYPE_HSPA,
+        TelephonyManager.NETWORK_TYPE_HSDPA,
+        TelephonyManager.NETWORK_TYPE_HSUPA,
+        TelephonyManager.NETWORK_TYPE_UMTS    -> "UMTS"
+        TelephonyManager.NETWORK_TYPE_EDGE,
+        TelephonyManager.NETWORK_TYPE_GPRS,
+        TelephonyManager.NETWORK_TYPE_GSM     -> "GSM"
+        TelephonyManager.NETWORK_TYPE_CDMA,
+        TelephonyManager.NETWORK_TYPE_1xRTT,
+        TelephonyManager.NETWORK_TYPE_EVDO_0,
+        TelephonyManager.NETWORK_TYPE_EVDO_A,
+        TelephonyManager.NETWORK_TYPE_EVDO_B  -> "CDMA"
+        TelephonyManager.NETWORK_TYPE_UNKNOWN -> "UNKNOWN"
+        else                                  -> "OTHER($type)"
+    }
+}
+
+---
+
+<!-- WakeLockHandler.kt -->
+package art.n0v4.littlebrother
+
+import android.content.Context
+import android.os.PowerManager
+
+class WakeLockHandler(context: Context) {
+    private val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    private val wakeLock: PowerManager.WakeLock = pm.newWakeLock(
+        PowerManager.PARTIAL_WAKE_LOCK,
+        "LittleBrother::ScanWakeLock"
+    )
+
+    fun acquire() {
+        if (!wakeLock.isHeld) {
+            wakeLock.acquire(30 * 60 * 1000L) // max 30 min per acquire
+        }
+    }
+
+    fun release() {
+        if (wakeLock.isHeld) wakeLock.release()
+    }
+}
+
+---
+
+<!-- Now the Dart core - models, constants, DB, then modules. -->
+<!-- lib/core/constants/lb_constants.dart -->
+/// LittleBrother — global constants
+library;
+
+class LBChannels {
+  static const cell  = 'art.n0v4.littlebrother/cell';
+  static const opsec = 'art.n0v4.littlebrother/opsec';
+  static const wake  = 'art.n0v4.littlebrother/wake';
+}
+
+class LBDb {
+  static const name            = 'littlebrother.db';
+  static const version         = 1;
+  static const tObservations   = 'observations';
+  static const tKnownDevices   = 'known_devices';
+  static const tCellBaseline   = 'cell_baseline';
+  static const tThreatEvents   = 'threat_events';
+  static const tSessions       = 'sessions';
+}
+
+class LBSignalType {
+  static const wifi        = 'wifi';
+  static const ble         = 'ble';
+  static const cell        = 'cell';
+  static const cellNeighbor = 'cell_neighbor';
+}
+
+class LBThreatType {
+  static const stingray   = 'stingray';
+  static const rogueAp    = 'rogue_ap';
+  static const bleTracker = 'ble_tracker';
+  static const downgrade  = 'downgrade';
+  static const watchlist  = 'watchlist_hit';
+}
+
+class LBThreatFlag {
+  static const clean   = 0;
+  static const watch   = 1;
+  static const hostile = 2;
+}
+
+class LBSeverity {
+  static const info     = 1;
+  static const low      = 2;
+  static const medium   = 3;
+  static const high     = 4;
+  static const critical = 5;
+}
+
+class LBScanInterval {
+  static const wifiForegroundMs   = 10000;
+  static const wifiBackgroundMs   = 30000;
+  static const bleForegroundMs    = 5000;
+  static const cellForegroundMs   = 5000;
+  static const gpsMaxAgeMs        = 30000;
+}
+
+class LBPathLoss {
+  /// Free-space path loss exponent
+  static const nOutdoor = 2.0;
+  /// Indoor path loss exponent
+  static const nIndoor  = 2.7;
+  /// Default TX power assumption (dBm) when not provided by AP
+  static const defaultTxPowerDbm = -59;
+}
+
+class LBThresholds {
+  /// Composite stingray score → alert levels
+  static const stingrayWarning  = 40;
+  static const stingrayThreat   = 65;
+  static const stingrayCritical = 85;
+
+  /// OPSEC auto-trigger severity
+  static const opsecAutoSeverity = LBSeverity.critical;
+
+  /// RSSI anomaly: dB above baseline to flag
+  static const rssiAnomalyDb = 15;
+
+  /// BLE: advertising interval below this (ms) is flagged aggressive
+  static const bleAggressiveIntervalMs = 100;
+
+  /// Cell: changes per 60s to flag instability
+  static const cellIdChurnPerMinute = 3;
+
+  /// Neighbor count: below this in urban area is suspicious
+  static const minExpectedNeighbors = 3;
+}
+
+class LBGeohash {
+  /// 7 chars ≈ 150m precision — used for cell baseline grouping
+  static const precisionLevel = 7;
+}
+
+---
+
+<!-- lib/core/models/lb_signal.dart - unified signal model -->
+import 'dart:convert';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+
+/// Unified signal model — all scanner types normalize into this.
+class LBSignal {
+  final String id;           // UUID
+  final String sessionId;
+  final String signalType;   // LBSignalType.*
+  final String identifier;   // BSSID / MAC / cellKey
+  final String displayName;  // SSID / device name / carrier
+  final int rssi;            // dBm
+  final double distanceM;    // estimated meters
+  final int riskScore;       // 0–100
+  final double? lat;
+  final double? lon;
+  final Map<String, dynamic> metadata;
+  final DateTime timestamp;
+  final int threatFlag;      // LBThreatFlag.*
+
+  const LBSignal({
+    required this.id,
+    required this.sessionId,
+    required this.signalType,
+    required this.identifier,
+    required this.displayName,
+    required this.rssi,
+    required this.distanceM,
+    required this.riskScore,
+    this.lat,
+    this.lon,
+    required this.metadata,
+    required this.timestamp,
+    this.threatFlag = LBThreatFlag.clean,
+  });
+
+  factory LBSignal.fromMap(Map<String, dynamic> m) => LBSignal(
+    id:          m['id'] as String,
+    sessionId:   m['session_id'] as String,
+    signalType:  m['signal_type'] as String,
+    identifier:  m['identifier'] as String,
+    displayName: m['display_name'] as String,
+    rssi:        m['rssi'] as int,
+    distanceM:   (m['distance_m'] as num).toDouble(),
+    riskScore:   m['risk_score'] as int,
+    lat:         m['lat'] != null ? (m['lat'] as num).toDouble() : null,
+    lon:         m['lon'] != null ? (m['lon'] as num).toDouble() : null,
+    metadata:    jsonDecode(m['metadata_json'] as String) as Map<String, dynamic>,
+    timestamp:   DateTime.fromMillisecondsSinceEpoch(m['ts'] as int),
+    threatFlag:  m['threat_flag'] as int? ?? LBThreatFlag.clean,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'id':            id,
+    'session_id':    sessionId,
+    'signal_type':   signalType,
+    'identifier':    identifier,
+    'display_name':  displayName,
+    'rssi':          rssi,
+    'distance_m':    distanceM,
+    'risk_score':    riskScore,
+    'lat':           lat,
+    'lon':           lon,
+    'metadata_json': jsonEncode(metadata),
+    'ts':            timestamp.millisecondsSinceEpoch,
+    'threat_flag':   threatFlag,
+  };
+
+  LBSignal copyWith({
+    int? riskScore,
+    int? threatFlag,
+    double? lat,
+    double? lon,
+    double? distanceM,
+  }) => LBSignal(
+    id:          id,
+    sessionId:   sessionId,
+    signalType:  signalType,
+    identifier:  identifier,
+    displayName: displayName,
+    rssi:        rssi,
+    distanceM:   distanceM ?? this.distanceM,
+    riskScore:   riskScore ?? this.riskScore,
+    lat:         lat ?? this.lat,
+    lon:         lon ?? this.lon,
+    metadata:    metadata,
+    timestamp:   timestamp,
+    threatFlag:  threatFlag ?? this.threatFlag,
+  );
+
+  @override
+  String toString() =>
+    'LBSignal($signalType:$identifier rssi=$rssi risk=$riskScore)';
+}
+
+/// Threat event model
+class LBThreatEvent {
+  final int? id;
+  final String threatType;
+  final int severity;
+  final String identifier;
+  final Map<String, dynamic> evidence;
+  final double? lat;
+  final double? lon;
+  final DateTime timestamp;
+  final bool dismissed;
+
+  const LBThreatEvent({
+    this.id,
+    required this.threatType,
+    required this.severity,
+    required this.identifier,
+    required this.evidence,
+    this.lat,
+    this.lon,
+    required this.timestamp,
+    this.dismissed = false,
+  });
+
+  factory LBThreatEvent.fromMap(Map<String, dynamic> m) => LBThreatEvent(
+    id:          m['id'] as int?,
+    threatType:  m['threat_type'] as String,
+    severity:    m['severity'] as int,
+    identifier:  m['identifier'] as String,
+    evidence:    jsonDecode(m['evidence_json'] as String) as Map<String, dynamic>,
+    lat:         m['lat'] != null ? (m['lat'] as num).toDouble() : null,
+    lon:         m['lon'] != null ? (m['lon'] as num).toDouble() : null,
+    timestamp:   DateTime.fromMillisecondsSinceEpoch(m['ts'] as int),
+    dismissed:   (m['dismissed'] as int?) == 1,
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'threat_type':   threatType,
+    'severity':      severity,
+    'identifier':    identifier,
+    'evidence_json': jsonEncode(evidence),
+    'lat':           lat,
+    'lon':           lon,
+    'ts':            timestamp.millisecondsSinceEpoch,
+    'dismissed':     dismissed ? 1 : 0,
+  };
+
+  String get severityLabel => switch (severity) {
+    LBSeverity.info     => 'INFO',
+    LBSeverity.low      => 'LOW',
+    LBSeverity.medium   => 'MEDIUM',
+    LBSeverity.high     => 'HIGH',
+    LBSeverity.critical => 'CRITICAL',
+    _                   => 'UNKNOWN',
+  };
+}
+
+/// Scan session model
+class LBSession {
+  final String id;
+  final DateTime startedAt;
+  DateTime? endedAt;
+  int observationCount;
+  int threatCount;
+
+  LBSession({
+    required this.id,
+    required this.startedAt,
+    this.endedAt,
+    this.observationCount = 0,
+    this.threatCount = 0,
+  });
+
+  factory LBSession.fromMap(Map<String, dynamic> m) => LBSession(
+    id:               m['id'] as String,
+    startedAt:        DateTime.fromMillisecondsSinceEpoch(m['started_at'] as int),
+    endedAt:          m['ended_at'] != null
+                        ? DateTime.fromMillisecondsSinceEpoch(m['ended_at'] as int)
+                        : null,
+    observationCount: m['observation_count'] as int? ?? 0,
+    threatCount:      m['threat_count'] as int? ?? 0,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'id':                id,
+    'started_at':        startedAt.millisecondsSinceEpoch,
+    'ended_at':          endedAt?.millisecondsSinceEpoch,
+    'observation_count': observationCount,
+    'threat_count':      threatCount,
+  };
+}
+
+---
+
+<!-- lib/core/db/lb_database.dart - full SQLite schema and DAOs -->
+import 'dart:async';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+
+class LBDatabase {
+  LBDatabase._();
+  static final LBDatabase instance = LBDatabase._();
+
+  Database? _db;
+
+  Future<Database> get db async {
+    _db ??= await _open();
+    return _db!;
+  }
+
+  // ── Schema ───────────────────────────────────────────────────────────────
+
+  Future<Database> _open() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final path = p.join(dir.path, LBDb.name);
+
+    return openDatabase(
+      path,
+      version: LBDb.version,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA journal_mode = WAL');
+        await db.execute('PRAGMA synchronous = NORMAL');
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
+    );
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE ${LBDb.tSessions} (
+        id                TEXT PRIMARY KEY,
+        started_at        INTEGER NOT NULL,
+        ended_at          INTEGER,
+        observation_count INTEGER NOT NULL DEFAULT 0,
+        threat_count      INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE ${LBDb.tObservations} (
+        id            TEXT PRIMARY KEY,
+        session_id    TEXT NOT NULL,
+        signal_type   TEXT NOT NULL,
+        identifier    TEXT NOT NULL,
+        display_name  TEXT NOT NULL,
+        rssi          INTEGER NOT NULL,
+        distance_m    REAL NOT NULL,
+        risk_score    INTEGER NOT NULL,
+        lat           REAL,
+        lon           REAL,
+        metadata_json TEXT NOT NULL,
+        ts            INTEGER NOT NULL,
+        threat_flag   INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (session_id) REFERENCES ${LBDb.tSessions}(id)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_obs_identifier ON ${LBDb.tObservations}(identifier, ts);
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_obs_session ON ${LBDb.tObservations}(session_id);
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_obs_type ON ${LBDb.tObservations}(signal_type, ts);
+    ''');
+
+    await db.execute('''
+      CREATE TABLE ${LBDb.tKnownDevices} (
+        identifier         TEXT PRIMARY KEY,
+        signal_type        TEXT NOT NULL,
+        display_name       TEXT NOT NULL,
+        vendor             TEXT NOT NULL DEFAULT '',
+        first_seen         INTEGER NOT NULL,
+        last_seen          INTEGER NOT NULL,
+        observation_count  INTEGER NOT NULL DEFAULT 1,
+        threat_flag        INTEGER NOT NULL DEFAULT 0,
+        notes              TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_known_flag ON ${LBDb.tKnownDevices}(threat_flag);
+    ''');
+
+    await db.execute('''
+      CREATE TABLE ${LBDb.tCellBaseline} (
+        geohash              TEXT NOT NULL,
+        cell_key             TEXT NOT NULL,
+        network_type         TEXT NOT NULL,
+        avg_rssi             REAL NOT NULL,
+        first_seen           INTEGER NOT NULL,
+        observation_count    INTEGER NOT NULL DEFAULT 1,
+        opencellid_verified  INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (geohash, cell_key)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE ${LBDb.tThreatEvents} (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        threat_type   TEXT NOT NULL,
+        severity      INTEGER NOT NULL,
+        identifier    TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        lat           REAL,
+        lon           REAL,
+        ts            INTEGER NOT NULL,
+        dismissed     INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_threats_ts ON ${LBDb.tThreatEvents}(ts DESC);
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_threats_dismissed ON ${LBDb.tThreatEvents}(dismissed, severity);
+    ''');
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // Future migrations go here
+  }
+
+  // ── Session DAO ──────────────────────────────────────────────────────────
+
+  Future<void> insertSession(LBSession session) async {
+    final database = await db;
+    await database.insert(LBDb.tSessions, session.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateSession(LBSession session) async {
+    final database = await db;
+    await database.update(
+      LBDb.tSessions,
+      session.toMap(),
+      where: 'id = ?',
+      whereArgs: [session.id],
+    );
+  }
+
+  Future<List<LBSession>> getSessions({int limit = 50}) async {
+    final database = await db;
+    final rows = await database.query(
+      LBDb.tSessions,
+      orderBy: 'started_at DESC',
+      limit: limit,
+    );
+    return rows.map(LBSession.fromMap).toList();
+  }
+
+  // ── Observation DAO ──────────────────────────────────────────────────────
+
+  Future<void> insertObservationBatch(List<LBSignal> signals) async {
+    if (signals.isEmpty) return;
+    final database = await db;
+    final batch = database.batch();
+    for (final s in signals) {
+      batch.insert(LBDb.tObservations, s.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<LBSignal>> getObservationsBySession(String sessionId) async {
+    final database = await db;
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+      orderBy: 'ts DESC',
+    );
+    return rows.map(LBSignal.fromMap).toList();
+  }
+
+  Future<List<LBSignal>> getRecentByType(String signalType, {int limitMs = 60000}) async {
+    final database = await db;
+    final since = DateTime.now().millisecondsSinceEpoch - limitMs;
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: 'signal_type = ? AND ts >= ?',
+      whereArgs: [signalType, since],
+      orderBy: 'ts DESC',
+    );
+    return rows.map(LBSignal.fromMap).toList();
+  }
+
+  Future<List<LBSignal>> getRssiHistory(String identifier, {int limit = 100}) async {
+    final database = await db;
+    final rows = await database.query(
+      LBDb.tObservations,
+      columns: ['ts', 'rssi', 'distance_m', 'lat', 'lon'],
+      where: 'identifier = ?',
+      whereArgs: [identifier],
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    // Minimal reconstruction for graphing
+    return rows.map((m) => LBSignal(
+      id: '',
+      sessionId: '',
+      signalType: '',
+      identifier: identifier,
+      displayName: '',
+      rssi: m['rssi'] as int,
+      distanceM: (m['distance_m'] as num).toDouble(),
+      riskScore: 0,
+      lat: m['lat'] != null ? (m['lat'] as num).toDouble() : null,
+      lon: m['lon'] != null ? (m['lon'] as num).toDouble() : null,
+      metadata: {},
+      timestamp: DateTime.fromMillisecondsSinceEpoch(m['ts'] as int),
+    )).toList();
+  }
+
+  Future<void> purgeOlderThan(Duration age) async {
+    final database = await db;
+    final cutoff = DateTime.now().subtract(age).millisecondsSinceEpoch;
+    await database.delete(
+      LBDb.tObservations,
+      where: 'ts < ?',
+      whereArgs: [cutoff],
+    );
+  }
+
+  // ── Known Devices DAO ────────────────────────────────────────────────────
+
+  Future<void> upsertKnownDevice(LBSignal signal, String vendor) async {
+    final database = await db;
+    final now = signal.timestamp.millisecondsSinceEpoch;
+    await database.rawInsert('''
+      INSERT INTO ${LBDb.tKnownDevices}
+        (identifier, signal_type, display_name, vendor, first_seen, last_seen, observation_count, threat_flag)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(identifier) DO UPDATE SET
+        display_name       = excluded.display_name,
+        vendor             = CASE WHEN vendor = '' THEN excluded.vendor ELSE vendor END,
+        last_seen          = excluded.last_seen,
+        observation_count  = observation_count + 1
+    ''', [
+      signal.identifier,
+      signal.signalType,
+      signal.displayName,
+      vendor,
+      now, now,
+      signal.threatFlag,
+    ]);
+  }
+
+  Future<Map<String, int>> getKnownDeviceThreatFlags(List<String> identifiers) async {
+    if (identifiers.isEmpty) return {};
+    final database = await db;
+    final placeholders = identifiers.map((_) => '?').join(',');
+    final rows = await database.rawQuery(
+      'SELECT identifier, threat_flag FROM ${LBDb.tKnownDevices} WHERE identifier IN ($placeholders)',
+      identifiers,
+    );
+    return {for (final r in rows) r['identifier'] as String: r['threat_flag'] as int};
+  }
+
+  Future<void> setThreatFlag(String identifier, int flag, {String notes = ''}) async {
+    final database = await db;
+    await database.update(
+      LBDb.tKnownDevices,
+      {'threat_flag': flag, 'notes': notes},
+      where: 'identifier = ?',
+      whereArgs: [identifier],
+    );
+  }
+
+  // ── Cell Baseline DAO ────────────────────────────────────────────────────
+
+  Future<void> upsertCellBaseline({
+    required String geohash,
+    required String cellKey,
+    required String networkType,
+    required int rssi,
+  }) async {
+    final database = await db;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await database.rawInsert('''
+      INSERT INTO ${LBDb.tCellBaseline}
+        (geohash, cell_key, network_type, avg_rssi, first_seen, observation_count)
+      VALUES (?, ?, ?, ?, ?, 1)
+      ON CONFLICT(geohash, cell_key) DO UPDATE SET
+        avg_rssi          = (avg_rssi * observation_count + excluded.avg_rssi) / (observation_count + 1),
+        observation_count = observation_count + 1,
+        network_type      = excluded.network_type
+    ''', [geohash, cellKey, networkType, rssi.toDouble(), now]);
+  }
+
+  Future<Map<String, dynamic>?> getCellBaseline(String geohash, String cellKey) async {
+    final database = await db;
+    final rows = await database.query(
+      LBDb.tCellBaseline,
+      where: 'geohash = ? AND cell_key = ?',
+      whereArgs: [geohash, cellKey],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<List<Map<String, dynamic>>> getCellsAtGeohash(String geohash) async {
+    final database = await db;
+    return database.query(
+      LBDb.tCellBaseline,
+      where: 'geohash = ?',
+      whereArgs: [geohash],
+    );
+  }
+
+  // ── Threat Events DAO ────────────────────────────────────────────────────
+
+  Future<int> insertThreatEvent(LBThreatEvent event) async {
+    final database = await db;
+    return database.insert(LBDb.tThreatEvents, event.toMap());
+  }
+
+  Future<List<LBThreatEvent>> getThreatEvents({
+    bool includeDismissed = false,
+    int limit = 100,
+    int? minSeverity,
+  }) async {
+    final database = await db;
+    final conditions = <String>[];
+    final args = <dynamic>[];
+    if (!includeDismissed) {
+      conditions.add('dismissed = 0');
+    }
+    if (minSeverity != null) {
+      conditions.add('severity >= ?');
+      args.add(minSeverity);
+    }
+    final where = conditions.isEmpty ? null : conditions.join(' AND ');
+    final rows = await database.query(
+      LBDb.tThreatEvents,
+      where: where,
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    return rows.map(LBThreatEvent.fromMap).toList();
+  }
+
+  Future<void> dismissThreatEvent(int id) async {
+    final database = await db;
+    await database.update(
+      LBDb.tThreatEvents,
+      {'dismissed': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // ── Stats ────────────────────────────────────────────────────────────────
+
+  Future<Map<String, int>> getSessionStats(String sessionId) async {
+    final database = await db;
+    final result = await database.rawQuery('''
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN signal_type = 'wifi' THEN 1 ELSE 0 END) as wifi,
+        SUM(CASE WHEN signal_type = 'ble' THEN 1 ELSE 0 END) as ble,
+        SUM(CASE WHEN signal_type IN ('cell','cell_neighbor') THEN 1 ELSE 0 END) as cell,
+        SUM(CASE WHEN threat_flag > 0 THEN 1 ELSE 0 END) as threats
+      FROM ${LBDb.tObservations}
+      WHERE session_id = ?
+    ''', [sessionId]);
+    final row = result.first;
+    return {
+      'total':   row['total'] as int? ?? 0,
+      'wifi':    row['wifi'] as int? ?? 0,
+      'ble':     row['ble'] as int? ?? 0,
+      'cell':    row['cell'] as int? ?? 0,
+      'threats': row['threats'] as int? ?? 0,
+    };
+  }
+
+  Future<void> close() async {
+    final database = await db;
+    await database.close();
+    _db = null;
+  }
+}
+
+---
+
+<!-- lib/core/db/oui_lookup.dart - OUI vendor resolution -->
+import 'dart:convert';
+import 'package:flutter/services.dart';
+
+/// Resolves MAC address prefixes to vendor names via embedded OUI table.
+/// Table is loaded once and cached for the app lifetime.
+class OuiLookup {
+  OuiLookup._();
+  static final OuiLookup instance = OuiLookup._();
+
+  Map<String, String>? _table;
+  bool _loading = false;
+
+  Future<void> init() async {
+    if (_table != null || _loading) return;
+    _loading = true;
+    try {
+      final raw = await rootBundle.loadString('assets/oui/oui_table.json');
+      _table = Map<String, String>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      _table = {}; // graceful degradation — no vendor resolution
+    } finally {
+      _loading = false;
+    }
+  }
+
+  /// Resolve a MAC address (any format) to vendor name.
+  /// Returns empty string if unknown.
+  String resolve(String mac) {
+    if (_table == null || _table!.isEmpty) return '';
+    final normalized = _normalizeMac(mac);
+    if (normalized.length < 6) return '';
+
+    // Try 24-bit (3-byte) OUI first
+    final oui24 = normalized.substring(0, 6).toUpperCase();
+    if (_table!.containsKey(oui24)) return _table![oui24]!;
+
+    // Try 28-bit MA-S prefix
+    if (normalized.length >= 7) {
+      final oui28 = normalized.substring(0, 7).toUpperCase();
+      if (_table!.containsKey(oui28)) return _table![oui28]!;
+    }
+
+    return '';
+  }
+
+  /// Detect if a MAC address appears to be locally administered (randomized).
+  /// Bit 1 of the first octet set = locally administered = likely randomized.
+  bool isRandomized(String mac) {
+    final normalized = _normalizeMac(mac);
+    if (normalized.length < 2) return false;
+    final firstOctet = int.tryParse(normalized.substring(0, 2), radix: 16);
+    if (firstOctet == null) return false;
+    return (firstOctet & 0x02) != 0;
+  }
+
+  String _normalizeMac(String mac) =>
+    mac.replaceAll(RegExp(r'[:\-\.]'), '').toLowerCase();
+}
+
+---
+
+<!-- lib/core/db/geohash.dart - geohash encoding for cell baseline -->
+/// Pure Dart geohash encoder.
+/// No external dependency — used for cell baseline bucketing (~150m at precision 7).
+class Geohash {
+  static const _base32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+
+  /// Encode lat/lon to geohash string of given precision.
+  static String encode(double lat, double lon, {int precision = 7}) {
+    var minLat = -90.0, maxLat = 90.0;
+    var minLon = -180.0, maxLon = 180.0;
+
+    final buffer = StringBuffer();
+    var bits = 0;
+    var bitsTotal = 0;
+    var hashValue = 0;
+    var isEven = true;
+
+    while (buffer.length < precision) {
+      final mid = isEven ? (minLon + maxLon) / 2 : (minLat + maxLat) / 2;
+      final val = isEven ? lon : lat;
+
+      if (val > mid) {
+        hashValue = (hashValue << 1) | 1;
+        if (isEven) minLon = mid; else minLat = mid;
+      } else {
+        hashValue = hashValue << 1;
+        if (isEven) maxLon = mid; else maxLat = mid;
+      }
+
+      isEven = !isEven;
+      bits++;
+      bitsTotal++;
+
+      if (bits == 5) {
+        buffer.write(_base32[hashValue]);
+        bits = 0;
+        hashValue = 0;
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  /// Decode a geohash to its center lat/lon.
+  static ({double lat, double lon}) decode(String hash) {
+    var minLat = -90.0, maxLat = 90.0;
+    var minLon = -180.0, maxLon = 180.0;
+    var isEven = true;
+
+    for (final ch in hash.split('')) {
+      final idx = _base32.indexOf(ch);
+      if (idx == -1) break;
+      for (var bits = 4; bits >= 0; bits--) {
+        final bitVal = (idx >> bits) & 1;
+        if (isEven) {
+          final mid = (minLon + maxLon) / 2;
+          if (bitVal == 1) minLon = mid; else maxLon = mid;
+        } else {
+          final mid = (minLat + maxLat) / 2;
+          if (bitVal == 1) minLat = mid; else maxLat = mid;
+        }
+        isEven = !isEven;
+      }
+    }
+
+    return (
+      lat: (minLat + maxLat) / 2,
+      lon: (minLon + maxLon) / 2,
+    );
+  }
+}
+
+---
+
+<!-- lib/modules/wifi/wifi_scanner.dart -->
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:wifi_scan/wifi_scan.dart';
+import 'package:uuid/uuid.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/core/db/oui_lookup.dart';
+
+class WifiScanner {
+  final _uuid = const Uuid();
+  Timer? _timer;
+  final _controller = StreamController<List<LBSignal>>.broadcast();
+
+  Stream<List<LBSignal>> get stream => _controller.stream;
+  bool get isRunning => _timer != null;
+
+  /// Start continuous Wi-Fi scanning. [sessionId] is the active session UUID.
+  Future<void> start(String sessionId, {bool foreground = true}) async {
+    if (isRunning) return;
+    final interval = foreground
+        ? LBScanInterval.wifiForegroundMs
+        : LBScanInterval.wifiBackgroundMs;
+
+    // Immediate first scan
+    await _scan(sessionId);
+
+    _timer = Timer.periodic(Duration(milliseconds: interval), (_) async {
+      await _scan(sessionId);
+    });
+  }
+
+  Future<void> stop() async {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> _scan(String sessionId) async {
+    // Check capability
+    final can = await WiFiScan.instance.canStartScan();
+    if (can != CanStartScan.yes) return;
+
+    final started = await WiFiScan.instance.startScan();
+    if (!started) return;
+
+    final results = await WiFiScan.instance.getScannedResults();
+    final now = DateTime.now();
+    final signals = results.map((ap) => _normalize(ap, sessionId, now)).toList();
+
+    if (!_controller.isClosed) {
+      _controller.add(signals);
+    }
+  }
+
+  LBSignal _normalize(WiFiAccessPoint ap, String sessionId, DateTime now) {
+    final vendor = OuiLookup.instance.resolve(ap.bssid);
+    final rssi = ap.level;
+    final distanceM = _estimateDistance(rssi);
+    final riskScore = _computeRisk(ap);
+    final band = _bandFromFrequency(ap.frequency);
+    final channel = _channelFromFrequency(ap.frequency);
+    final security = _parseSecurity(ap.capabilities);
+
+    return LBSignal(
+      id:          _uuid.v4(),
+      sessionId:   sessionId,
+      signalType:  LBSignalType.wifi,
+      identifier:  ap.bssid,
+      displayName: ap.ssid.isEmpty ? '[hidden]' : ap.ssid,
+      rssi:        rssi,
+      distanceM:   distanceM,
+      riskScore:   riskScore,
+      metadata: {
+        'frequency_mhz':    ap.frequency,
+        'channel':          channel,
+        'band':             band,
+        'security':         security,
+        'capabilities':     ap.capabilities,
+        'vendor':           vendor,
+        'channel_width_mhz': ap.channelWidth ?? -1,
+        'ssid':             ap.ssid,
+        'is_hidden':        ap.ssid.isEmpty,
+        'is_randomized':    OuiLookup.instance.isRandomized(ap.bssid),
+      },
+      timestamp: now,
+    );
+  }
+
+  /// Path-loss distance estimate.
+  /// d = 10 ^ ((TxPower - RSSI) / (10 × n))
+  double _estimateDistance(int rssi, {int txPower = LBPathLoss.defaultTxPowerDbm}) {
+    final exp = (txPower - rssi) / (10 * LBPathLoss.nIndoor);
+    return math.pow(10, exp).toDouble();
+  }
+
+  int _computeRisk(WiFiAccessPoint ap) {
+    var score = 0;
+    final caps = ap.capabilities.toUpperCase();
+    final security = _parseSecurity(ap.capabilities);
+
+    if (security == 'OPEN')         score += 40;
+    if (security == 'WEP')          score += 35;
+    if (caps.contains('TKIP') && !caps.contains('CCMP')) score += 15;
+    if (ap.ssid.isEmpty)            score += 10; // hidden SSID
+    if (ap.frequency < 3000 && ap.level > -50) score += 10; // 2.4GHz close proximity
+
+    return score.clamp(0, 100);
+  }
+
+  String _parseSecurity(String caps) {
+    final c = caps.toUpperCase();
+    if (c.contains('WPA3'))  return 'WPA3';
+    if (c.contains('WPA2'))  return 'WPA2';
+    if (c.contains('WPA'))   return 'WPA';
+    if (c.contains('WEP'))   return 'WEP';
+    if (c.contains('[ESS]') || c.isEmpty) return 'OPEN';
+    return 'UNKNOWN';
+  }
+
+  String _bandFromFrequency(int freq) {
+    if (freq < 3000) return '2.4GHz';
+    if (freq < 5945) return '5GHz';
+    return '6GHz';
+  }
+
+  int _channelFromFrequency(int freq) {
+    // 2.4 GHz
+    if (freq >= 2412 && freq <= 2484) {
+      if (freq == 2484) return 14;
+      return (freq - 2412) ~/ 5 + 1;
+    }
+    // 5 GHz
+    if (freq >= 5180 && freq <= 5885) {
+      return (freq - 5000) ~/ 5;
+    }
+    // 6 GHz
+    if (freq >= 5955 && freq <= 7115) {
+      return (freq - 5955) ~/ 5 + 1;
+    }
+    return -1;
+  }
+
+  void dispose() {
+    stop();
+    _controller.close();
+  }
+}
+
+---
+
+<!-- lib/modules/ble/ble_scanner.dart -->
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:uuid/uuid.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/core/db/oui_lookup.dart';
+
+class BleScanner {
+  final _uuid = const Uuid();
+  StreamSubscription<List<ScanResult>>? _sub;
+  final _controller = StreamController<List<LBSignal>>.broadcast();
+
+  // Track last-seen timestamps per MAC for interval estimation
+  final _lastSeen = <String, DateTime>{};
+  // Track advertising intervals per MAC (rolling average)
+  final _advIntervals = <String, List<int>>{};
+
+  Stream<List<LBSignal>> get stream => _controller.stream;
+  bool get isRunning => _sub != null;
+
+  Future<void> start(String sessionId) async {
+    if (isRunning) return;
+
+    final adapterState = await FlutterBluePlus.adapterState.first;
+    if (adapterState != BluetoothAdapterState.on) return;
+
+    await FlutterBluePlus.startScan(
+      timeout: const Duration(days: 365), // continuous
+      continuousUpdates: true,
+      removeIfGone: const Duration(seconds: 30),
+    );
+
+    _sub = FlutterBluePlus.scanResults.listen((results) {
+      final now = DateTime.now();
+      final signals = results
+          .map((r) => _normalize(r, sessionId, now))
+          .whereType<LBSignal>()
+          .toList();
+      if (!_controller.isClosed) {
+        _controller.add(signals);
+      }
+    });
+  }
+
+  Future<void> stop() async {
+    await _sub?.cancel();
+    _sub = null;
+    await FlutterBluePlus.stopScan();
+  }
+
+  LBSignal? _normalize(ScanResult result, String sessionId, DateTime now) {
+    final mac = result.device.remoteId.str;
+    final rssi = result.rssi;
+    if (rssi == 0) return null; // invalid reading
+
+    // Advertising interval estimation
+    int? intervalMs;
+    if (_lastSeen.containsKey(mac)) {
+      final delta = now.difference(_lastSeen[mac]!).inMilliseconds;
+      if (delta > 0 && delta < 10000) {
+        _advIntervals.putIfAbsent(mac, () => []).add(delta);
+        final intervals = _advIntervals[mac]!;
+        if (intervals.length > 10) intervals.removeAt(0);
+        intervalMs = intervals.reduce((a, b) => a + b) ~/ intervals.length;
+      }
+    }
+    _lastSeen[mac] = now;
+
+    final adv = result.advertisementData;
+    final manufacturerData = adv.manufacturerData;
+    final mfgId = manufacturerData.keys.firstOrNull;
+    final mfgBytes = mfgId != null ? manufacturerData[mfgId] : null;
+    final mfgHex = mfgBytes != null
+        ? mfgBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()
+        : '';
+
+    final vendor = OuiLookup.instance.resolve(mac);
+    final isRandomized = OuiLookup.instance.isRandomized(mac);
+    final trackerType = _identifyTracker(mfgId, mfgHex, adv.serviceUuids);
+    final distanceM = _estimateDistance(rssi, adv.txPowerLevel);
+
+    var riskScore = 0;
+    if (trackerType != null) riskScore += 60;
+    if (isRandomized && intervalMs != null && intervalMs < LBThresholds.bleAggressiveIntervalMs) {
+      riskScore += 20;
+    }
+    if (vendor.isEmpty && adv.serviceUuids.isEmpty) riskScore += 15;
+    riskScore = riskScore.clamp(0, 100);
+
+    return LBSignal(
+      id:          _uuid.v4(),
+      sessionId:   sessionId,
+      signalType:  LBSignalType.ble,
+      identifier:  mac,
+      displayName: adv.advName.isNotEmpty ? adv.advName : (vendor.isNotEmpty ? vendor : mac),
+      rssi:        rssi,
+      distanceM:   distanceM,
+      riskScore:   riskScore,
+      metadata: {
+        'manufacturer_id':       mfgId,
+        'manufacturer_data':     mfgHex,
+        'vendor':                vendor,
+        'service_uuids':         adv.serviceUuids.map((u) => u.toString()).toList(),
+        'connectable':           adv.connectable,
+        'advertising_interval_ms': intervalMs,
+        'is_randomized_mac':     isRandomized,
+        'tracker_type':          trackerType,
+        'tx_power':              adv.txPowerLevel,
+        'adv_name':              adv.advName,
+      },
+      timestamp: now,
+    );
+  }
+
+  /// Returns tracker type string if known signature matches, else null.
+  String? _identifyTracker(int? mfgId, String mfgHex, List<Guid> serviceUuids) {
+    // Apple AirTag: mfgId=0x004C, byte[0]=0x12, length pattern
+    if (mfgId == 0x004C && mfgHex.startsWith('12')) return 'AirTag';
+
+    // Tile: service UUID FEEDxxxx
+    if (serviceUuids.any((u) => u.toString().toUpperCase().startsWith('FEED'))) return 'Tile';
+
+    // Samsung SmartTag: mfgId=0x0075
+    if (mfgId == 0x0075) return 'SmartTag';
+
+    // Chipolo: service UUID FE6F
+    if (serviceUuids.any((u) => u.toString().toUpperCase().contains('FE6F'))) return 'Chipolo';
+
+    // TrackR / generic: mfgId=0x0157
+    if (mfgId == 0x0157) return 'TrackR';
+
+    return null;
+  }
+
+  double _estimateDistance(int rssi, int? txPower) {
+    final tx = txPower ?? LBPathLoss.defaultTxPowerDbm;
+    final exp = (tx - rssi) / (10 * LBPathLoss.nIndoor);
+    return math.pow(10, exp).toDouble();
+  }
+
+  void dispose() {
+    stop();
+    _controller.close();
+  }
+}
+
+---
+
+<!-- lib/modules/cell/cell_scanner.dart -->
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:uuid/uuid.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+
+class CellScanner {
+  static const _channel = MethodChannel(LBChannels.cell);
+  final _uuid = const Uuid();
+  Timer? _timer;
+  final _controller = StreamController<List<LBSignal>>.broadcast();
+
+  // Track serving cell history for instability detection
+  final _servingCellHistory = <({String cellKey, DateTime ts})>[];
+
+  Stream<List<LBSignal>> get stream => _controller.stream;
+  bool get isRunning => _timer != null;
+
+  String? _lastNetworkType;
+
+  Future<void> start(String sessionId) async {
+    if (isRunning) return;
+    await _scan(sessionId);
+    _timer = Timer.periodic(
+      const Duration(milliseconds: LBScanInterval.cellForegroundMs),
+      (_) => _scan(sessionId),
+    );
+  }
+
+  Future<void> stop() async {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> _scan(String sessionId) async {
+    try {
+      final List<dynamic> rawCells =
+          await _channel.invokeMethod('getAllCellInfo') as List<dynamic>;
+      final Map<String, dynamic> serviceState =
+          await _channel.invokeMethod('getServiceState') as Map<String, dynamic>;
+
+      final now = DateTime.now();
+      final networkType = serviceState['networkTypeName'] as String? ?? 'UNKNOWN';
+      final signals = <LBSignal>[];
+
+      for (final raw in rawCells) {
+        final cell = Map<String, dynamic>.from(raw as Map);
+        final signal = _normalize(cell, sessionId, now, serviceState);
+        if (signal != null) signals.add(signal);
+      }
+
+      // Track network type transitions for downgrade detection
+      if (_lastNetworkType != null && _lastNetworkType != networkType) {
+        _injectDowngradeEvent(signals, _lastNetworkType!, networkType, sessionId, now);
+      }
+      _lastNetworkType = networkType;
+
+      // Track serving cell for instability detection
+      final serving = signals.where((s) => s.metadata['is_serving'] == true).firstOrNull;
+      if (serving != null) {
+        _servingCellHistory.add((cellKey: serving.identifier, ts: now));
+        // Keep last 2 minutes of history
+        final cutoff = now.subtract(const Duration(minutes: 2));
+        _servingCellHistory.removeWhere((e) => e.ts.isBefore(cutoff));
+      }
+
+      if (!_controller.isClosed) {
+        _controller.add(signals);
+      }
+    } on PlatformException catch (e) {
+      // Permission not granted or radio off — emit empty list
+      if (!_controller.isClosed) _controller.add([]);
+    }
+  }
+
+  LBSignal? _normalize(
+    Map<String, dynamic> cell,
+    String sessionId,
+    DateTime now,
+    Map<String, dynamic> serviceState,
+  ) {
+    final type    = cell['type'] as String? ?? 'UNKNOWN';
+    final cellKey = cell['cellKey'] as String? ?? '';
+    if (cellKey.isEmpty) return null;
+
+    final isServing = cell['isServing'] as bool? ?? false;
+    final rssi = _bestRssi(cell, type);
+    final displayName = _buildDisplayName(cell, serviceState, isServing);
+
+    return LBSignal(
+      id:          _uuid.v4(),
+      sessionId:   sessionId,
+      signalType:  isServing ? LBSignalType.cell : LBSignalType.cellNeighbor,
+      identifier:  cellKey,
+      displayName: displayName,
+      rssi:        rssi,
+      distanceM:   _estimateDistanceFromTa(cell),
+      riskScore:   0, // set by analyzer
+      metadata: {
+        'type':            type,
+        'mcc':             cell['mcc'],
+        'mnc':             cell['mnc'],
+        'cell_key':        cellKey,
+        'is_serving':      isServing,
+        'tac':             cell['tac'] ?? cell['lac'],
+        'ci':              cell['ci'] ?? cell['cid'] ?? cell['nci'],
+        'pci':             cell['pci'],
+        'earfcn':          cell['earfcn'] ?? cell['arfcn'] ?? cell['uarfcn'],
+        'bandwidth':       cell['bandwidth'],
+        'rsrp':            cell['rsrp'],
+        'rsrq':            cell['rsrq'],
+        'sinr':            cell['sinr'] ?? cell['rssnr'] ?? cell['ssSinr'],
+        'timing_advance':  cell['timingAdvance'],
+        'band':            cell['band'],
+        'network_type_name': serviceState['networkTypeName'],
+        'operator':        serviceState['operatorName'],
+        'is_roaming':      serviceState['isRoaming'],
+        // NR-specific
+        'ss_rsrp':         cell['ssRsrp'],
+        'ss_rsrq':         cell['ssRsrq'],
+        'ss_sinr':         cell['ssSinr'],
+      },
+      timestamp: now,
+    );
+  }
+
+  void _injectDowngradeEvent(
+    List<LBSignal> signals,
+    String from,
+    String to,
+    String sessionId,
+    DateTime now,
+  ) {
+    // A special synthetic signal to alert the analyzer of a network type change.
+    // Type: 'cell', identifier: 'DOWNGRADE', riskScore=0 (analyzer scores it).
+    signals.add(LBSignal(
+      id:          _uuid.v4(),
+      sessionId:   sessionId,
+      signalType:  LBSignalType.cell,
+      identifier:  'DOWNGRADE_EVENT',
+      displayName: 'Network Downgrade: $from → $to',
+      rssi:        0,
+      distanceM:   0,
+      riskScore:   0,
+      metadata: {
+        'event':    'downgrade',
+        'from':     from,
+        'to':       to,
+        'is_gsm_downgrade': to == 'GSM',
+      },
+      timestamp: now,
+    ));
+  }
+
+  int _bestRssi(Map<String, dynamic> cell, String type) {
+    switch (type) {
+      case 'LTE':  return cell['rsrp'] as int? ?? cell['rssi'] as int? ?? -100;
+      case 'NR':   return cell['ssRsrp'] as int? ?? -100;
+      case 'UMTS': return cell['rssi'] as int? ?? -100;
+      case 'GSM':  return cell['rssi'] as int? ?? -100;
+      default:     return cell['rssi'] as int? ?? -100;
+    }
+  }
+
+  double _estimateDistanceFromTa(Map<String, dynamic> cell) {
+    // Timing Advance: each unit ≈ 78.12 meters (LTE TA) / 550m (GSM TA)
+    final ta = cell['timingAdvance'] as int?;
+    if (ta == null || ta < 0 || ta > 1282) return -1;
+    return ta * 78.12; // LTE approximation
+  }
+
+  String _buildDisplayName(
+    Map<String, dynamic> cell,
+    Map<String, dynamic> serviceState,
+    bool isServing,
+  ) {
+    final type     = cell['type'] as String? ?? '?';
+    final operator = serviceState['operatorName'] as String? ?? '';
+    final ci       = cell['ci'] ?? cell['cid'] ?? cell['nci'] ?? '?';
+    if (isServing) {
+      return operator.isNotEmpty ? '$operator ($type)' : '$type Cell $ci';
+    }
+    return '$type Neighbor #$ci';
+  }
+
+  /// How many times has the serving cell changed in the last 60 seconds?
+  int servingCellChangesPerMinute() {
+    final cutoff = DateTime.now().subtract(const Duration(minutes: 1));
+    final recent = _servingCellHistory
+        .where((e) => e.ts.isAfter(cutoff))
+        .map((e) => e.cellKey)
+        .toList();
+    if (recent.length < 2) return 0;
+    var changes = 0;
+    for (var i = 1; i < recent.length; i++) {
+      if (recent[i] != recent[i - 1]) changes++;
+    }
+    return changes;
+  }
+
+  void dispose() {
+    stop();
+    _controller.close();
+  }
+}
+
+---
+
+<!-- lib/modules/gps/gps_tracker.dart -->
+import 'dart:async';
+import 'package:geolocator/geolocator.dart';
+import 'package:littlebrother/core/db/geohash.dart';
+
+class GpsTracker {
+  StreamSubscription<Position>? _sub;
+  Position? _lastPosition;
+  DateTime? _lastFixTime;
+
+  Position? get lastPosition => _lastPosition;
+  DateTime? get lastFixTime => _lastFixTime;
+
+  /// Returns true if the last GPS fix is fresh enough to trust.
+  bool get hasFreshFix {
+    if (_lastFixTime == null) return false;
+    return DateTime.now().difference(_lastFixTime!).inMilliseconds <
+        30000; // 30s
+  }
+
+  String? get currentGeohash {
+    if (_lastPosition == null) return null;
+    return Geohash.encode(
+      _lastPosition!.latitude,
+      _lastPosition!.longitude,
+      precision: 7,
+    );
+  }
+
+  Future<bool> start() async {
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return false;
+    }
+
+    _sub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5, // update every 5m of movement
+      ),
+    ).listen((pos) {
+      _lastPosition = pos;
+      _lastFixTime = DateTime.now();
+    });
+
+    return true;
+  }
+
+  Future<void> stop() async {
+    await _sub?.cancel();
+    _sub = null;
+  }
+
+  void dispose() {
+    stop();
+  }
+}
+
+---
+
+<!-- lib/analyzer/lib_analyzer.dart - stingray + rogue AP + BLE tracker heuristics -->
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/db/lb_database.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+
+/// Runs after each normalizer pass. Evaluates signals against baselines,
+/// known-bad lists, and heuristic rules. Emits LBThreatEvents.
+class LBAnalyzer {
+  final LBDatabase _db;
+
+  LBAnalyzer(this._db);
+
+  /// Analyze a batch of signals from one scan cycle.
+  /// Returns any threat events generated (caller persists + routes to alerts).
+  Future<List<LBThreatEvent>> analyze(
+    List<LBSignal> signals, {
+    String? geohash,
+    int? servingCellChangesPerMinute,
+  }) async {
+    final threats = <LBThreatEvent>[];
+
+    final cells    = signals.where((s) => s.signalType == LBSignalType.cell).toList();
+    final neighbors = signals.where((s) => s.signalType == LBSignalType.cellNeighbor).toList();
+    final wifis    = signals.where((s) => s.signalType == LBSignalType.wifi).toList();
+    final bles     = signals.where((s) => s.signalType == LBSignalType.ble).toList();
+
+    // ── Stingray detection ──────────────────────────────────────────────
+    final serving = cells.where((c) => c.metadata['is_serving'] == true).firstOrNull;
+    if (serving != null) {
+      final stingrayResult = await _analyzeStingray(
+        serving: serving,
+        neighbors: neighbors,
+        geohash: geohash,
+        changesPerMinute: servingCellChangesPerMinute ?? 0,
+      );
+      if (stingrayResult != null) threats.add(stingrayResult);
+    }
+
+    // ── Downgrade event ─────────────────────────────────────────────────
+    final downgrade = cells.where((c) => c.identifier == 'DOWNGRADE_EVENT').firstOrNull;
+    if (downgrade != null) {
+      final t = _analyzeDowngrade(downgrade);
+      if (t != null) threats.add(t);
+    }
+
+    // ── Rogue AP detection ──────────────────────────────────────────────
+    for (final ap in wifis) {
+      final rogueResult = await _analyzeRogueAp(ap, wifis);
+      if (rogueResult != null) threats.add(rogueResult);
+    }
+
+    // ── BLE tracker detection ───────────────────────────────────────────
+    for (final ble in bles) {
+      final trackerResult = await _analyzeBleTracker(ble);
+      if (trackerResult != null) threats.add(trackerResult);
+    }
+
+    return threats;
+  }
+
+  // ── Stingray heuristics ────────────────────────────────────────────────
+
+  Future<LBThreatEvent?> _analyzeStingray({
+    required LBSignal serving,
+    required List<LBSignal> neighbors,
+    String? geohash,
+    required int changesPerMinute,
+  }) async {
+    final evidence = <String, dynamic>{};
+    var score = 0;
+
+    // H1 — Unknown Cell ID (weight 25)
+    if (geohash != null) {
+      final cellKey = serving.identifier;
+      final baseline = await _db.getCellBaseline(geohash, cellKey);
+      if (baseline == null) {
+        evidence['unknown_cell'] = {'score': 100, 'weight': 25, 'detail': 'Cell ID never seen at this location'};
+        score += 25;
+      } else if ((baseline['observation_count'] as int) < 3) {
+        evidence['rare_cell'] = {'score': 50, 'weight': 25, 'detail': 'Cell ID seen <3 times at this location'};
+        score += 12;
+      }
+    }
+
+    // H2 — Missing neighbor list (weight 10)
+    if (neighbors.isEmpty) {
+      evidence['no_neighbors'] = {'score': 80, 'weight': 10, 'detail': 'Serving cell reports 0 neighbors'};
+      score += 8;
+    } else if (neighbors.length < LBThresholds.minExpectedNeighbors) {
+      evidence['few_neighbors'] = {'score': 40, 'weight': 10, 'detail': 'Only ${neighbors.length} neighbors reported'};
+      score += 4;
+    }
+
+    // H3 — RSSI anomaly: serving cell much stronger than baseline (weight 20)
+    if (geohash != null) {
+      final baseline = await _db.getCellBaseline(geohash, serving.identifier);
+      if (baseline != null) {
+        final avgRssi = baseline['avg_rssi'] as double;
+        final delta = serving.rssi - avgRssi;
+        if (delta > LBThresholds.rssiAnomalyDb) {
+          evidence['rssi_anomaly'] = {
+            'score': 100, 'weight': 20,
+            'detail': '${delta.toStringAsFixed(1)} dB above historical baseline',
+            'observed': serving.rssi,
+            'baseline': avgRssi,
+          };
+          score += 20;
+        }
+      }
+    }
+
+    // H4 — Cell ID instability (weight 3)
+    if (changesPerMinute >= LBThresholds.cellIdChurnPerMinute) {
+      evidence['cell_instability'] = {
+        'score': 80, 'weight': 3,
+        'detail': '$changesPerMinute serving cell changes in last 60s',
+      };
+      score += 3;
+    }
+
+    // H5 — GSM network type (highest risk — no encryption) (weight 30)
+    // Note: actual downgrade is caught separately; this catches if we start on GSM
+    final netType = serving.metadata['network_type_name'] as String? ?? '';
+    if (netType == 'GSM') {
+      evidence['gsm_network'] = {'score': 60, 'weight': 30, 'detail': 'Currently on unencrypted GSM network'};
+      score += 18;
+    }
+
+    if (score < 10) return null;
+
+    return LBThreatEvent(
+      threatType: LBThreatType.stingray,
+      severity:   _stingraySeverity(score),
+      identifier: serving.identifier,
+      evidence:   {'composite_score': score, 'heuristics': evidence},
+      lat:        serving.lat,
+      lon:        serving.lon,
+      timestamp:  serving.timestamp,
+    );
+  }
+
+  // ── Downgrade event ────────────────────────────────────────────────────
+
+  LBThreatEvent? _analyzeDowngrade(LBSignal event) {
+    final from = event.metadata['from'] as String? ?? '';
+    final to   = event.metadata['to'] as String? ?? '';
+    final isGsm = event.metadata['is_gsm_downgrade'] as bool? ?? false;
+
+    // LTE/NR → GSM is worst case (weight 30 in composite)
+    final severity = isGsm ? LBSeverity.critical : LBSeverity.high;
+    final score    = isGsm ? 80 : 45;
+
+    return LBThreatEvent(
+      threatType: LBThreatType.downgrade,
+      severity:   severity,
+      identifier: 'DOWNGRADE_EVENT',
+      evidence: {
+        'composite_score': score,
+        'from': from,
+        'to':   to,
+        'detail': 'Network downgrade from $from to $to detected',
+      },
+      lat:       event.lat,
+      lon:       event.lon,
+      timestamp: event.timestamp,
+    );
+  }
+
+  // ── Rogue AP heuristics ────────────────────────────────────────────────
+
+  Future<LBThreatEvent?> _analyzeRogueAp(
+    LBSignal ap,
+    List<LBSignal> allWifi,
+  ) async {
+    var score = 0;
+    final evidence = <String, dynamic>{};
+
+    // H1 — SSID collision (same SSID, different BSSID to known-good)
+    // Compare against DB-stored devices for this SSID
+    // (simplified: check if another AP in this scan has same SSID)
+    final ssid = ap.metadata['ssid'] as String? ?? '';
+    if (ssid.isNotEmpty) {
+      final sameSSID = allWifi.where(
+        (w) => w.metadata['ssid'] == ssid && w.identifier != ap.identifier
+      );
+      if (sameSSID.isNotEmpty) {
+        score += 25;
+        evidence['ssid_collision'] = {'detail': 'SSID "$ssid" seen on multiple BSSIDs'};
+      }
+    }
+
+    // H2 — Open + risk score already computed in scanner
+    score += ap.riskScore;
+    if (ap.riskScore >= 40) {
+      evidence['open_network'] = {'detail': 'Unencrypted or weak security (risk=$${ap.riskScore})'};
+    }
+
+    // H3 — OUI is consumer device (not AP vendor)
+    final vendor = ap.metadata['vendor'] as String? ?? '';
+    if (vendor.isNotEmpty && _isConsumerDeviceVendor(vendor)) {
+      score += 20;
+      evidence['consumer_oui'] = {'detail': 'BSSID OUI resolves to consumer device: $vendor'};
+    }
+
+    if (score < 40) return null;
+
+    return LBThreatEvent(
+      threatType: LBThreatType.rogueAp,
+      severity:   score >= 70 ? LBSeverity.high : LBSeverity.medium,
+      identifier: ap.identifier,
+      evidence:   {'composite_score': score, 'heuristics': evidence},
+      lat:        ap.lat,
+      lon:        ap.lon,
+      timestamp:  ap.timestamp,
+    );
+  }
+
+  bool _isConsumerDeviceVendor(String vendor) {
+    final v = vendor.toLowerCase();
+    // Known consumer device brands that wouldn't be an AP
+    return v.contains('apple') || v.contains('samsung') || v.contains('google') ||
+           v.contains('oneplus') || v.contains('xiaomi') || v.contains('huawei') ||
+           v.contains('motorola') || v.contains('lg electronics');
+  }
+
+  // ── BLE Tracker heuristics ─────────────────────────────────────────────
+
+  Future<LBThreatEvent?> _analyzeBleTracker(LBSignal ble) async {
+    var score = 0;
+    final evidence = <String, dynamic>{};
+    final trackerType = ble.metadata['tracker_type'] as String?;
+
+    // H1 — Known tracker signature
+    if (trackerType != null) {
+      score += 60;
+      evidence['known_tracker'] = {'type': trackerType, 'detail': 'Matches $trackerType advertising signature'};
+    }
+
+    // H2 — Aggressive advertising interval
+    final intervalMs = ble.metadata['advertising_interval_ms'] as int?;
+    if (intervalMs != null && intervalMs < LBThresholds.bleAggressiveIntervalMs) {
+      score += 20;
+      evidence['aggressive_adv'] = {'interval_ms': intervalMs, 'detail': 'Advertising at aggressive ${intervalMs}ms interval'};
+    }
+
+    // H3 — Persistent follower: check if seen across multiple geohash locations
+    // (Requires DB query — simplified for P1, full implementation in P3)
+
+    // H4 — Unrecognized manufacturer + no services
+    final vendor = ble.metadata['vendor'] as String? ?? '';
+    final services = (ble.metadata['service_uuids'] as List?)?.length ?? 0;
+    if (vendor.isEmpty && services == 0) {
+      score += 15;
+      evidence['covert_device'] = {'detail': 'No OUI match, no service UUIDs'};
+    }
+
+    if (score < 30) return null;
+
+    return LBThreatEvent(
+      threatType: LBThreatType.bleTracker,
+      severity:   score >= 60 ? LBSeverity.high : LBSeverity.medium,
+      identifier: ble.identifier,
+      evidence:   {'composite_score': score, 'heuristics': evidence},
+      lat:        ble.lat,
+      lon:        ble.lon,
+      timestamp:  ble.timestamp,
+    );
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  int _stingraySeverity(int score) {
+    if (score >= LBThresholds.stingrayCritical) return LBSeverity.critical;
+    if (score >= LBThresholds.stingrayThreat)   return LBSeverity.high;
+    if (score >= LBThresholds.stingrayWarning)  return LBSeverity.medium;
+    return LBSeverity.low;
+  }
+}
+
+---
+
+<!-- lib/alerts/alert_engine.dart -->
+import 'dart:async';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/db/lb_database.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
+
+/// Routes threat events to push notifications, UI, and OPSEC triggers.
+class AlertEngine {
+  final LBDatabase _db;
+  final FlutterLocalNotificationsPlugin _notifs;
+  final _threatController = StreamController<LBThreatEvent>.broadcast();
+
+  Stream<LBThreatEvent> get threatStream => _threatController.stream;
+
+  // User-configurable thresholds (defaults)
+  int opsecAutoSeverity = LBSeverity.critical;
+  bool opsecAutoEnabled = false;
+
+  // Callback for OPSEC trigger (set by OpsecController)
+  Future<void> Function()? onOpsecTrigger;
+
+  // Dedup: don't re-alert same threat within cooldown window
+  final _recentAlerts = <String, DateTime>{};
+  static const _alertCooldown = Duration(minutes: 5);
+
+  AlertEngine(this._db, this._notifs);
+
+  Future<void> init() async {
+    const android = AndroidInitializationSettings('@drawable/ic_notification');
+    const ios     = DarwinInitializationSettings();
+    await _notifs.initialize(
+      const InitializationSettings(android: android, iOS: ios),
+    );
+
+    // Create notification channels
+    const channel = AndroidNotificationChannel(
+      'lb_threats',
+      'LittleBrother Threats',
+      description: 'RF threat detection alerts',
+      importance: Importance.max,
+      enableVibration: true,
+      playSound: true,
+    );
+    await _notifs
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
+
+  Future<void> handleThreatEvents(List<LBThreatEvent> events) async {
+    for (final event in events) {
+      await _route(event);
+    }
+  }
+
+  Future<void> _route(LBThreatEvent event) async {
+    // Dedup
+    final key = '${event.threatType}:${event.identifier}';
+    final lastAlert = _recentAlerts[key];
+    if (lastAlert != null &&
+        DateTime.now().difference(lastAlert) < _alertCooldown) {
+      return;
+    }
+    _recentAlerts[key] = DateTime.now();
+
+    // Persist
+    await _db.insertThreatEvent(event);
+
+    // Broadcast to UI
+    if (!_threatController.isClosed) {
+      _threatController.add(event);
+    }
+
+    // Push notification if severity >= medium
+    if (event.severity >= LBSeverity.medium) {
+      await _pushNotification(event);
+    }
+
+    // OPSEC auto-trigger
+    if (opsecAutoEnabled &&
+        event.severity >= opsecAutoSeverity &&
+        onOpsecTrigger != null) {
+      await onOpsecTrigger!();
+    }
+  }
+
+  Future<void> _pushNotification(LBThreatEvent event) async {
+    final title = _notifTitle(event);
+    final body  = _notifBody(event);
+
+    await _notifs.show(
+      event.hashCode.abs() % 10000,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'lb_threats',
+          'LittleBrother Threats',
+          channelDescription: 'RF threat detection alerts',
+          importance: event.severity >= LBSeverity.critical
+              ? Importance.max
+              : Importance.high,
+          priority: Priority.high,
+          color: _severityColor(event.severity),
+          enableLights: true,
+          ledColor: _severityColor(event.severity),
+          ledOnMs: 500,
+          ledOffMs: 500,
+          icon: '@drawable/ic_notification',
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentSound: true,
+        ),
+      ),
+    );
+  }
+
+  String _notifTitle(LBThreatEvent event) {
+    final prefix = switch (event.severity) {
+      LBSeverity.critical => '⛔ CRITICAL',
+      LBSeverity.high     => '🔴 THREAT',
+      LBSeverity.medium   => '🟠 WARNING',
+      _                   => '🟡 ALERT',
+    };
+    return switch (event.threatType) {
+      LBThreatType.stingray   => '$prefix — IMSI Catcher Detected',
+      LBThreatType.downgrade  => '$prefix — Network Downgrade',
+      LBThreatType.rogueAp    => '$prefix — Rogue Access Point',
+      LBThreatType.bleTracker => '$prefix — BLE Tracker Detected',
+      _                       => '$prefix — ${event.threatType}',
+    };
+  }
+
+  String _notifBody(LBThreatEvent event) {
+    final score = event.evidence['composite_score'];
+    return switch (event.threatType) {
+      LBThreatType.stingray   => 'Cell ${event.identifier} shows IMSI catcher signatures (score: $score)',
+      LBThreatType.downgrade  => '${event.evidence['detail'] ?? 'Network type degraded'}',
+      LBThreatType.rogueAp    => 'AP ${event.identifier} shows rogue access point signatures',
+      LBThreatType.bleTracker => 'Device ${event.identifier} appears to be a tracking device',
+      _                       => event.identifier,
+    };
+  }
+
+  // Returns an Android color int
+  dynamic _severityColor(int severity) => switch (severity) {
+    LBSeverity.critical => const Color(0xFFFF4444),
+    LBSeverity.high     => const Color(0xFFFF8C00),
+    LBSeverity.medium   => const Color(0xFFFFD700),
+    _                   => const Color(0xFF3B82F6),
+  };
+
+  void dispose() {
+    _threatController.close();
+  }
+}
+
+// Minimal Color shim for use outside widget context
+class Color {
+  final int value;
+  const Color(this.value);
+}
+
+---
+
+<!-- lib/opsec/opsec_controller.dart -->
+import 'package:flutter/services.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+
+/// Controls RF kill sequences and OPSEC automation.
+class OpsecController {
+  static const _channel = MethodChannel(LBChannels.opsec);
+
+  bool _airplaneModeAvailable = false;
+
+  Future<void> init() async {
+    try {
+      _airplaneModeAvailable =
+          await _channel.invokeMethod('canWriteSettings') as bool? ?? false;
+    } on PlatformException {
+      _airplaneModeAvailable = false;
+    }
+  }
+
+  bool get canKillRf => _airplaneModeAvailable;
+
+  /// Full RF kill: attempt airplane mode, fallback to Wi-Fi + BT disable.
+  /// Returns description of what was accomplished.
+  Future<String> killRf() async {
+    final results = <String>[];
+
+    if (_airplaneModeAvailable) {
+      try {
+        final ok = await _channel.invokeMethod('setAirplaneMode', {'enable': true}) as bool?;
+        if (ok == true) {
+          results.add('Airplane mode enabled');
+          return results.join(', ');
+        }
+      } on PlatformException catch (e) {
+        results.add('Airplane mode failed: ${e.message}');
+      }
+    }
+
+    // Fallback: Wi-Fi disable
+    try {
+      final result = await _channel.invokeMethod('setWifiEnabled', {'enable': false}) as bool?;
+      if (result == true) {
+        results.add('Wi-Fi disabled');
+      } else {
+        results.add('Wi-Fi panel opened (user confirmation required)');
+      }
+    } on PlatformException {
+      results.add('Wi-Fi disable unavailable');
+    }
+
+    return results.isEmpty ? 'RF kill failed — manual action required' : results.join('; ');
+  }
+
+  Future<String> restoreRf() async {
+    if (_airplaneModeAvailable) {
+      try {
+        await _channel.invokeMethod('setAirplaneMode', {'enable': false});
+        return 'Airplane mode disabled';
+      } on PlatformException {/* fall through */}
+    }
+    return 'Manual RF restore required';
+  }
+
+  Future<void> requestWriteSettingsPermission() async {
+    try {
+      await _channel.invokeMethod('requestWriteSettings');
+    } on PlatformException {/* user must handle */}
+  }
+}
+
+---
+
+<!-- Now the UI theme and the scan coordinator, then main.dart: -->
