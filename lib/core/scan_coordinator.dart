@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/alerts/alert_engine.dart';
 import 'package:littlebrother/analyzer/lb_analyzer.dart';
@@ -57,8 +56,7 @@ class ScanCoordinator {
   Future<void> init() async {
     await OuiLookup.instance.init();
 
-    final notifs = FlutterLocalNotificationsPlugin();
-    _alerts  = AlertEngine(_db, notifs);
+    _alerts  = AlertEngine(_db);
     _opsec   = OpsecController();
     _wifi    = WifiScanner();
     _ble     = BleScanner();

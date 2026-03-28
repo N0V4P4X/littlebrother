@@ -69,10 +69,10 @@ class BleScanner {
     _lastSeen[mac] = now;
 
     final adv = result.advertisementData;
-    final manufacturerData = adv.manufacturerData;
-    final mfgId = manufacturerData.keys.firstOrNull;
+    final manufacturerData = adv.manufacturerData; // Map<int, List<int>>
+    final mfgId    = manufacturerData.keys.firstOrNull;
     final mfgBytes = mfgId != null ? manufacturerData[mfgId] : null;
-    final mfgHex = mfgBytes != null
+    final mfgHex   = mfgBytes != null
         ? mfgBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()
         : '';
 
@@ -99,16 +99,16 @@ class BleScanner {
       distanceM:   distanceM,
       riskScore:   riskScore,
       metadata: {
-        'manufacturer_id':       mfgId,
-        'manufacturer_data':     mfgHex,
-        'vendor':                vendor,
-        'service_uuids':         adv.serviceUuids.map((u) => u.toString()).toList(),
-        'connectable':           adv.connectable,
+        'manufacturer_id':         mfgId,
+        'manufacturer_data':       mfgHex,
+        'vendor':                  vendor,
+        'service_uuids':           adv.serviceUuids.map((u) => u.toString()).toList(),
+        'connectable':             adv.connectable,
         'advertising_interval_ms': intervalMs,
-        'is_randomized_mac':     isRandomized,
-        'tracker_type':          trackerType,
-        'tx_power':              adv.txPowerLevel,
-        'adv_name':              adv.advName,
+        'is_randomized_mac':       isRandomized,
+        'tracker_type':            trackerType,
+        'tx_power':                adv.txPowerLevel,
+        'adv_name':                adv.advName,
       },
       timestamp: now,
     );

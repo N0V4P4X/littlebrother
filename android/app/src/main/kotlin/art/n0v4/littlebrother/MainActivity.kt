@@ -15,10 +15,37 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL_CELL    = "art.n0v4.littlebrother/cell"
         const val CHANNEL_OPSEC   = "art.n0v4.littlebrother/opsec"
         const val CHANNEL_WAKE    = "art.n0v4.littlebrother/wake"
+        const val CHANNEL_PERMS   = "art.n0v4.littlebrother/permissions"
     }
+
+    private lateinit var permHandler: PermissionChannelHandler
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        permHandler = PermissionChannelHandler(this)
+        flutterEngine.plugins.add(object : io.flutter.embedding.engine.plugins.FlutterPlugin {
+            override fun onAttachedToEngine(binding: io.flutter.embedding.engine.plugins.FlutterPlugin.FlutterPluginBinding) {}
+            override fun onDetachedFromEngine(binding: io.flutter.embedding.engine.plugins.FlutterPlugin.FlutterPluginBinding) {}
+        })
+
+        // ── Permission channel ────────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_PERMS)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "requestBackgroundLocation" -> permHandler.checkAndRequest(
+                        android.Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+                        PermissionChannelHandler.REQ_BACKGROUND_LOCATION,
+                        result
+                    )
+                    "requestNearbyWifi" -> permHandler.checkAndRequest(
+                        android.Manifest.permission.NEARBY_WIFI_DEVICES,
+                        PermissionChannelHandler.REQ_NEARBY_WIFI,
+                        result
+                    )
+                    else -> result.notImplemented()
+                }
+            }
 
         // ── Cell channel ──────────────────────────────────────────────────
         val cellHandler = CellChannelHandler(this)
@@ -106,6 +133,17 @@ class MainActivity : FlutterActivity() {
             }
         } catch (e: Exception) {
             result.error("WIFI_ERROR", e.message, null)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (::permHandler.isInitialized) {
+            permHandler.onRequestPermissionsResult(requestCode, permissions, grantResults)
         }
     }
 }

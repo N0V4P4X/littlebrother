@@ -59,7 +59,7 @@ class _RadarScreenState extends State<RadarScreen>
 
     _sweepCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: (_sweepDurationS * 1000).round()),
+      duration: Duration(milliseconds: (_sweepDurationS * 1000).round()),
     )..repeat();
 
     _sweepAnim = Tween<double>(begin: 0, end: 2 * math.pi)

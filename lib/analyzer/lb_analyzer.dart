@@ -191,7 +191,7 @@ class LBAnalyzer {
     // H2 — Open + risk score already computed in scanner
     score += ap.riskScore;
     if (ap.riskScore >= 40) {
-      evidence['open_network'] = {'detail': 'Unencrypted or weak security (risk=$${ap.riskScore})'};
+      evidence['open_network'] = {'detail': 'Unencrypted or weak security (risk=${ap.riskScore})'};
     }
 
     // H3 — OUI is consumer device (not AP vendor)

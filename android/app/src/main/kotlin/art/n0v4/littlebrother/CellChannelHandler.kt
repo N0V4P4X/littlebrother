@@ -189,7 +189,7 @@ class CellChannelHandler(private val context: Context) {
         if (sig == null) return emptyMap()
         return mapOf(
             "level" to sig.level,
-            "dbm" to sig.getCellSignalStrengths<CellSignalStrength>().firstOrNull()?.dbm.let { it ?: -1 }
+            "dbm" to sig.getCellSignalStrengths().firstOrNull()?.dbm.let { it ?: -1 }
         )
     }
 

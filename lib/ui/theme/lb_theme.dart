@@ -159,7 +159,7 @@ ThemeData buildLBTheme() {
         fontFamily: 'Courier New', fontSize: 10, letterSpacing: 1,
       ),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: LBColors.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(

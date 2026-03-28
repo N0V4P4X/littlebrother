@@ -11,36 +11,36 @@ dependencies:
     sdk: flutter
 
   # ── Radio scanning ─────────────────────────────────────────────────────
-  flutter_blue_plus: ^1.32.12       # BLE passive scan
-  wifi_scan: ^0.4.1                 # Wi-Fi AP enumeration
-  geolocator: ^12.0.0               # GPS positioning
+  flutter_blue_plus: ^2.2.1       # BLE passive scan
+  wifi_scan: ^0.4.1               # Wi-Fi AP enumeration
+  geolocator: ^14.0.2             # GPS positioning
 
   # ── Storage ────────────────────────────────────────────────────────────
-  sqflite: ^2.3.3                   # Local SQLite
-  path_provider: ^2.1.4             # App data directory
+  sqflite: ^2.3.3                 # Local SQLite
+  path_provider: ^2.1.4           # App data directory
   path: ^1.9.0
 
   # ── UI / rendering ─────────────────────────────────────────────────────
-  fl_chart: ^0.69.0                 # RSSI history graphs
-  flutter_local_notifications: ^18.0.0  # Threat alerts + foreground service
+  fl_chart: ^0.69.0                # RSSI history graphs — pinned for compat
+  flutter_local_notifications: '>=18.0.0 <19.0.0'  # pin to resolved v18 API
 
   # ── Permissions ────────────────────────────────────────────────────────
-  permission_handler: ^11.3.1
+  permission_handler: ^12.0.1
 
   # ── Export / share ─────────────────────────────────────────────────────
-  share_plus: ^10.0.0
-  csv: ^6.0.0
+  share_plus: ^12.0.1
+  csv: ^8.0.0
 
   # ── Utilities ──────────────────────────────────────────────────────────
   uuid: ^4.4.2
-  intl: ^0.19.0
+  intl: ^0.20.2
   collection: ^1.18.0
-  crypto: ^3.0.3                    # geohash + fingerprinting
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
   mockito: ^5.4.4
   build_runner: ^2.4.12
 
