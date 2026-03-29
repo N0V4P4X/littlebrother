@@ -15,6 +15,7 @@ class LBDb {
   static const tCellBaseline   = 'cell_baseline';
   static const tThreatEvents   = 'threat_events';
   static const tSessions       = 'sessions';
+  static const tAggregateCells = 'aggregate_cells';
 }
 
 class LBSignalType {

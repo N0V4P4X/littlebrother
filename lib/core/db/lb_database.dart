@@ -122,6 +122,21 @@ class LBDatabase {
       CREATE INDEX idx_threats_dismissed ON ${LBDb.tThreatEvents}(dismissed, severity);
     ''');
 
+    await db.execute('''
+      CREATE TABLE ${LBDb.tAggregateCells} (
+        geohash       TEXT NOT NULL,
+        precision     INTEGER NOT NULL DEFAULT 7,
+        device_count  INTEGER NOT NULL DEFAULT 0,
+        obs_count     INTEGER NOT NULL DEFAULT 0,
+        worst_flag    INTEGER NOT NULL DEFAULT 0,
+        wifi_count    INTEGER NOT NULL DEFAULT 0,
+        ble_count     INTEGER NOT NULL DEFAULT 0,
+        cell_count    INTEGER NOT NULL DEFAULT 0,
+        most_recent   INTEGER NOT NULL,
+        PRIMARY KEY (geohash, precision)
+      )
+    ''');
+
     try {
       await db.execute('PRAGMA foreign_keys = ON');
     } catch (_) {
@@ -130,7 +145,22 @@ class LBDatabase {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Future migrations go here
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE ${LBDb.tAggregateCells} (
+          geohash       TEXT NOT NULL,
+          precision     INTEGER NOT NULL DEFAULT 7,
+          device_count  INTEGER NOT NULL DEFAULT 0,
+          obs_count     INTEGER NOT NULL DEFAULT 0,
+          worst_flag    INTEGER NOT NULL DEFAULT 0,
+          wifi_count    INTEGER NOT NULL DEFAULT 0,
+          ble_count     INTEGER NOT NULL DEFAULT 0,
+          cell_count    INTEGER NOT NULL DEFAULT 0,
+          most_recent   INTEGER NOT NULL,
+          PRIMARY KEY (geohash, precision)
+        )
+      ''');
+    }
   }
 
   // ── Session DAO ──────────────────────────────────────────────────────────
@@ -361,6 +391,96 @@ class LBDatabase {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ── Aggregate Map DAO ───────────────────────────────────────────────────
+
+  Future<void> rebuildAggregateCells({int precision = 7}) async {
+    final database = await db;
+    await database.delete(
+      LBDb.tAggregateCells,
+      where: 'precision = ?',
+      whereArgs: [precision],
+    );
+
+    await database.rawInsert('''
+      INSERT INTO ${LBDb.tAggregateCells}
+        (geohash, precision, device_count, obs_count, worst_flag,
+         wifi_count, ble_count, cell_count, most_recent)
+      SELECT
+        SUBSTR(o.metadata_json,
+          INSTR(o.metadata_json, '"geohash":"') + 11,
+          $precision) AS geohash,
+        $precision,
+        COUNT(DISTINCT o.identifier) AS device_count,
+        COUNT(*) AS obs_count,
+        MAX(o.threat_flag) AS worst_flag,
+        SUM(CASE WHEN o.signal_type = 'wifi' THEN 1 ELSE 0 END) AS wifi_count,
+        SUM(CASE WHEN o.signal_type = 'ble' THEN 1 ELSE 0 END) AS ble_count,
+        SUM(CASE WHEN o.signal_type IN ('cell','cell_neighbor') THEN 1 ELSE 0 END) AS cell_count,
+        MAX(o.ts) AS most_recent
+      FROM ${LBDb.tObservations} o
+      WHERE o.lat IS NOT NULL AND o.lon IS NOT NULL
+      GROUP BY geohash
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> getAggregateCells({
+    int precision = 7,
+    int? minObs,
+    int? minThreatFlag,
+    int? sinceMs,
+  }) async {
+    final database = await db;
+    final conditions = <String>['precision = ?'];
+    final args = <dynamic>[precision];
+
+    if (minObs != null) {
+      conditions.add('obs_count >= ?');
+      args.add(minObs);
+    }
+    if (sinceMs != null) {
+      conditions.add('most_recent >= ?');
+      args.add(sinceMs);
+    }
+
+    final rows = await database.query(
+      LBDb.tAggregateCells,
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'obs_count DESC',
+    );
+
+    if (minThreatFlag != null) {
+      return rows.where((r) => (r['worst_flag'] as int) >= minThreatFlag).toList();
+    }
+    return rows;
+  }
+
+  Future<List<Map<String, dynamic>>> getDevicesAtCell(String geohash, {int precision = 7}) async {
+    final database = await db;
+    return database.rawQuery('''
+      SELECT
+        o.identifier,
+        o.display_name,
+        o.signal_type,
+        k.vendor,
+        COUNT(*) AS obs_count,
+        COUNT(DISTINCT SUBSTR(om.metadata_json,
+          INSTR(om.metadata_json, '"geohash":"') + 11,
+          $precision)) AS cell_count,
+        MAX(o.threat_flag) AS worst_flag,
+        MIN(o.ts) AS first_seen,
+        MAX(o.ts) AS last_seen
+      FROM ${LBDb.tObservations} o
+      LEFT JOIN ${LBDb.tKnownDevices} k ON k.identifier = o.identifier
+      LEFT JOIN ${LBDb.tObservations} om ON om.identifier = o.identifier
+      WHERE SUBSTR(o.metadata_json,
+          INSTR(o.metadata_json, '"geohash":"') + 11,
+          $precision) = ?
+      GROUP BY o.identifier
+      ORDER BY obs_count DESC
+    ''', [geohash]);
   }
 
   // ── Stats ────────────────────────────────────────────────────────────────

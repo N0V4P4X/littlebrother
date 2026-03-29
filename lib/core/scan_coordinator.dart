@@ -205,10 +205,14 @@ class ScanCoordinator {
     // Stamp GPS onto each signal
     final geotagged = signals.map((s) {
       if (_gps.hasFreshFix && _gps.lastPosition != null) {
-        return s.copyWith(
+        final stamped = s.copyWith(
           lat: _gps.lastPosition!.latitude,
           lon: _gps.lastPosition!.longitude,
         );
+        if (_gps.currentGeohash != null) {
+          stamped.metadata['geohash'] = _gps.currentGeohash!;
+        }
+        return stamped;
       }
       return s;
     }).toList();

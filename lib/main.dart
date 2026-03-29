@@ -6,6 +6,7 @@ import 'package:littlebrother/ui/screens/signal_list_screen.dart';
 import 'package:littlebrother/ui/screens/threat_log_screen.dart';
 import 'package:littlebrother/ui/screens/opsec_screen.dart';
 import 'package:littlebrother/ui/screens/timeline_screen.dart';
+import 'package:littlebrother/ui/screens/aggregate_map_screen.dart';
 import 'package:littlebrother/ui/screens/permission_gate.dart';
 import 'package:littlebrother/ui/theme/lb_theme.dart';
 
@@ -147,7 +148,8 @@ class _AppShellState extends State<_AppShell> {
                 _coordinator.setOpsecAutoEnabled(v);
               },
             ),
-          4 => const TimelineScreen(),
+          4 => const AggregateMapScreen(),
+          5 => const TimelineScreen(),
           _ => const SizedBox.shrink(),
         };
       },
@@ -215,6 +217,10 @@ class _AppShellState extends State<_AppShell> {
             const BottomNavigationBarItem(
               icon: Icon(Icons.security, size: 20),
               label: 'OPSEC',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.map_outlined, size: 20),
+              label: 'INTEL MAP',
             ),
             const BottomNavigationBarItem(
               icon: Icon(Icons.timeline, size: 20),

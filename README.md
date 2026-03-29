@@ -376,7 +376,9 @@ Integration will begin once Gridland stabilizes beyond v0.
 - [ ] **P8** — ADS-B aircraft tracker (RTL-SDR + Mode S decoder)
 - [ ] **P8** — Flipper Zero integration (sub-GHz RX + Bluetooth bridge)
 - [ ] **P8** — FM RDS emergency broadcast detection
-- [ ] **P9** — Device Intel Map (pin map, signal trails, triangulation, static/mobile classification)
+- [x] **P9** — Device Intel Map (geohash grid, mobile/stationary classification, cell detail)
+- [ ] **P9** — OpenStreetMap / DeFlock-style tile overlay for the Intel Map
+- [ ] **P9** — Threat modeling tools: classification rules, entity correlation, pattern-of-life analysis
 - [ ] **P9** — Hardware: LittleBrother RF device (VHF–SHF SDR, multi-band, open hardware)
 
 ---
