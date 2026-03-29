@@ -10,7 +10,6 @@ import 'package:littlebrother/core/db/oui_lookup.dart';
 class WifiScanner {
   final _uuid = const Uuid();
   Timer? _timer;
-  DateTime? _lastResultTime;
 
   final _controller = StreamController<List<LBSignal>>.broadcast();
   final _throttleCtrl = StreamController<bool>.broadcast();

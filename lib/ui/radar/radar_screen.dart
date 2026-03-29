@@ -164,7 +164,7 @@ class _RadarScreenState extends State<RadarScreen>
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: widget.isScanning
-                    ? LBColors.green.withOpacity(0.15)
+                    ? LBColors.green.withValues(alpha: 0.15)
                     : LBColors.surface,
                 border: Border.all(
                   color: widget.isScanning ? LBColors.green : LBColors.border,
@@ -212,7 +212,7 @@ class _RadarScreenState extends State<RadarScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        border: Border.all(color: color.withOpacity(0.5), width: 1),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(

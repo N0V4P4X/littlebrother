@@ -396,9 +396,9 @@ class _PermRow extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
             decoration: BoxDecoration(
-              border: Border.all(color: color.withOpacity(0.4)),
+              border: Border.all(color: color.withValues(alpha: 0.4)),
               borderRadius: BorderRadius.circular(4),
-              color: color.withOpacity(0.06),
+              color: color.withValues(alpha: 0.06),
             ),
             child: Row(
               children: [
@@ -433,7 +433,7 @@ class _InfoCard extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
-      color: color.withOpacity(0.06),
+      color: color.withValues(alpha: 0.06),
       border: Border(left: BorderSide(color: color, width: 2)),
       borderRadius: const BorderRadius.only(
           topRight: Radius.circular(3), bottomRight: Radius.circular(3)),
@@ -455,7 +455,7 @@ class _LBButton extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         border: Border.all(color: color),
         borderRadius: BorderRadius.circular(4),
       ),

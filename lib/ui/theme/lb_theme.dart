@@ -50,7 +50,7 @@ class LBColors {
       'wifi'          => wifi,
       'ble'           => ble,
       'cell'          => cyan,
-      'cell_neighbor' => cyan.withOpacity(0.5),
+      'cell_neighbor' => cyan.withValues(alpha: 0.5),
       _               => dimText,
     };
   }

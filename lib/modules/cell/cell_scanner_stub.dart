@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:uuid/uuid.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 
@@ -53,7 +52,6 @@ class CellCapabilities {
 }
 
 class CellScanner {
-  final _uuid = const Uuid();
   Timer? _timer;
   final _controller = StreamController<List<LBSignal>>.broadcast();
 

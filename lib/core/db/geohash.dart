@@ -10,7 +10,6 @@ class Geohash {
 
     final buffer = StringBuffer();
     var bits = 0;
-    var bitsTotal = 0;
     var hashValue = 0;
     var isEven = true;
 
@@ -20,15 +19,22 @@ class Geohash {
 
       if (val > mid) {
         hashValue = (hashValue << 1) | 1;
-        if (isEven) minLon = mid; else minLat = mid;
+        if (isEven) {
+          minLon = mid;
+        } else {
+          minLat = mid;
+        }
       } else {
         hashValue = hashValue << 1;
-        if (isEven) maxLon = mid; else maxLat = mid;
+        if (isEven) {
+          maxLon = mid;
+        } else {
+          maxLat = mid;
+        }
       }
 
       isEven = !isEven;
       bits++;
-      bitsTotal++;
 
       if (bits == 5) {
         buffer.write(_base32[hashValue]);
@@ -53,10 +59,18 @@ class Geohash {
         final bitVal = (idx >> bits) & 1;
         if (isEven) {
           final mid = (minLon + maxLon) / 2;
-          if (bitVal == 1) minLon = mid; else maxLon = mid;
+          if (bitVal == 1) {
+            minLon = mid;
+          } else {
+            maxLon = mid;
+          }
         } else {
           final mid = (minLat + maxLat) / 2;
-          if (bitVal == 1) minLat = mid; else maxLat = mid;
+          if (bitVal == 1) {
+            minLat = mid;
+          } else {
+            maxLat = mid;
+          }
         }
         isEven = !isEven;
       }

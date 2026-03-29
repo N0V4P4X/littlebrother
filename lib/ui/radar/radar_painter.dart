@@ -106,8 +106,8 @@ class RadarPainter extends CustomPainter {
     // Subtle radial gradient from center
     final gradient = RadialGradient(
       colors: [
-        LBColors.blueDim.withOpacity(0.25),
-        LBColors.background.withOpacity(0),
+        LBColors.blueDim.withValues(alpha: 0.25),
+        LBColors.background.withValues(alpha: 0),
       ],
       stops: const [0, 1],
     );
@@ -132,7 +132,7 @@ class RadarPainter extends CustomPainter {
 
   void _drawGrid(Canvas canvas, double cx, double cy, double r) {
     final paint = Paint()
-      ..color = LBColors.blue.withOpacity(0.08)
+      ..color = LBColors.blue.withValues(alpha: 0.08)
       ..strokeWidth = 0.5;
 
     // 8 radial spokes
@@ -153,7 +153,7 @@ class RadarPainter extends CustomPainter {
 
     for (final dist in _ringDistances) {
       final ringR = (dist / _maxDistance) * r;
-      ringPaint.color = LBColors.blue.withOpacity(0.18);
+      ringPaint.color = LBColors.blue.withValues(alpha: 0.18);
       canvas.drawCircle(Offset(cx, cy), ringR, ringPaint);
 
       // Distance label
@@ -161,7 +161,7 @@ class RadarPainter extends CustomPainter {
         canvas,
         '${dist.toInt()}m',
         Offset(cx + ringR + 4, cy - 8),
-        LBColors.blue.withOpacity(0.5),
+        LBColors.blue.withValues(alpha: 0.5),
         9,
       );
     }
@@ -180,7 +180,7 @@ class RadarPainter extends CustomPainter {
       final x = cx + offset * math.cos(angles[i]);
       final y = cy + offset * math.sin(angles[i]);
       _drawText(canvas, labels[i], Offset(x - 5, y - 7),
-          LBColors.blue.withOpacity(0.4), 10);
+          LBColors.blue.withValues(alpha: 0.4), 10);
     }
   }
 
@@ -201,7 +201,7 @@ class RadarPainter extends CustomPainter {
         sweepA,
         false,
         Paint()
-          ..color = LBColors.blue.withOpacity(alpha)
+          ..color = LBColors.blue.withValues(alpha: alpha)
           ..style = PaintingStyle.stroke
           ..strokeWidth = r,
       );
@@ -216,7 +216,7 @@ class RadarPainter extends CustomPainter {
         cy + r * math.sin(sweepAngle),
       ),
       Paint()
-        ..color = LBColors.blue.withOpacity(0.9)
+        ..color = LBColors.blue.withValues(alpha: 0.9)
         ..strokeWidth = 1.5
         ..strokeCap = StrokeCap.round,
     );
@@ -236,7 +236,7 @@ class RadarPainter extends CustomPainter {
     for (final blip in blips) {
       final opacity = blip.opacity(sweepAngle, sweepDurationS);
       final color   = LBColors.blipColor(blip.signalType, blip.threatFlag)
-          .withOpacity(opacity);
+          .withValues(alpha: opacity);
 
       final bx = cx + blip.radius * r * math.cos(blip.angle);
       final by = cy + blip.radius * r * math.sin(blip.angle);
@@ -248,7 +248,7 @@ class RadarPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(bx, by),
         blipR * 2.5,
-        Paint()..color = color.withOpacity(opacity * 0.15),
+        Paint()..color = color.withValues(alpha: opacity * 0.15),
       );
 
       // Main dot
@@ -264,7 +264,7 @@ class RadarPainter extends CustomPainter {
           Offset(bx, by),
           blipR + 4,
           Paint()
-            ..color = LBColors.red.withOpacity(opacity * 0.7)
+            ..color = LBColors.red.withValues(alpha: opacity * 0.7)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1,
         );
@@ -275,13 +275,13 @@ class RadarPainter extends CustomPainter {
   void _drawThreatFlash(Canvas canvas, Size size) {
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = LBColors.red.withOpacity(flashOpacity * 0.3),
+      Paint()..color = LBColors.red.withValues(alpha: flashOpacity * 0.3),
     );
     // Pulsing border
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()
-        ..color = LBColors.red.withOpacity(flashOpacity * 0.8)
+        ..color = LBColors.red.withValues(alpha: flashOpacity * 0.8)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3,
     );

@@ -1,6 +1,4 @@
 class OpsecController {
-  bool _airplaneModeAvailable = false;
-
   Future<void> init() async {}
 
   bool get canKillRf => false;

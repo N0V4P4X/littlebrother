@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -74,9 +73,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final file = File('${dir.path}/littlebrother_session_$ts.csv');
     await file.writeAsString(buffer.toString());
     
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      subject: 'LittleBrother Session Export',
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Session Export'),
     );
   }
 
@@ -103,9 +101,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final file = File('${dir.path}/littlebrother_threats_$ts.csv');
     await file.writeAsString(buffer.toString());
     
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      subject: 'LittleBrother Threat Export',
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Threat Export'),
     );
   }
 
@@ -202,7 +199,7 @@ class _ThreatMini extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: LBColors.surface,
-        border: Border.all(color: color.withOpacity(0.5)),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
@@ -211,7 +208,7 @@ class _ThreatMini extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
+              color: color.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(2),
             ),
             child: Text(
@@ -255,9 +252,8 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final fmt = DateFormat('dd MMM yyyy');
     final timeFmt = DateFormat('HH:mm:ss');
-    final duration = session.endedAt != null
-        ? session.endedAt!.difference(session.startedAt)
-        : null;
+    final duration = session.endedAt
+        ?.difference(session.startedAt);
     
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

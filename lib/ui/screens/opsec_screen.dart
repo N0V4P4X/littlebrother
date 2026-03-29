@@ -137,7 +137,7 @@ class _InfoCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.06),
+        color: color.withValues(alpha: 0.06),
         border: Border(left: BorderSide(color: color, width: 2)),
         borderRadius: const BorderRadius.only(
           topRight: Radius.circular(3),
@@ -171,8 +171,8 @@ class _ActionButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          border: Border.all(color: color.withOpacity(0.5), width: 1),
+          color: color.withValues(alpha: 0.08),
+          border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Column(
@@ -244,11 +244,12 @@ class _ToggleRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: activeColor,
+            activeTrackColor: activeColor.withValues(alpha: 0.3),
+            thumbColor: WidgetStateProperty.resolveWith(
+              (s) => s.contains(WidgetState.selected) ? activeColor : LBColors.dimText,
+            ),
             trackColor: WidgetStateProperty.resolveWith(
-              (s) => s.contains(WidgetState.selected)
-                  ? activeColor.withOpacity(0.3)
-                  : LBColors.border,
+              (s) => s.contains(WidgetState.selected) ? activeColor.withValues(alpha: 0.3) : LBColors.border,
             ),
           ),
         ],

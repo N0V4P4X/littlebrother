@@ -15,7 +15,7 @@ class SignalTile extends StatelessWidget {
       LBSignalType.wifi          => LBColors.wifi,
       LBSignalType.ble           => LBColors.ble,
       LBSignalType.cell          => LBColors.cell,
-      LBSignalType.cellNeighbor  => LBColors.cell.withOpacity(0.5),
+      LBSignalType.cellNeighbor  => LBColors.cell.withValues(alpha: 0.5),
       _                          => LBColors.dimText,
     };
 
@@ -41,8 +41,8 @@ class SignalTile extends StatelessWidget {
               width: 42,
               padding: const EdgeInsets.symmetric(vertical: 3),
               decoration: BoxDecoration(
-                color: typeColor.withOpacity(0.12),
-                border: Border.all(color: typeColor.withOpacity(0.4), width: 1),
+                color: typeColor.withValues(alpha: 0.12),
+                border: Border.all(color: typeColor.withValues(alpha: 0.4), width: 1),
                 borderRadius: BorderRadius.circular(3),
               ),
               alignment: Alignment.center,
@@ -97,8 +97,8 @@ class SignalTile extends StatelessWidget {
               height: 32,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: riskColor.withOpacity(0.6), width: 1),
-                color: riskColor.withOpacity(0.08),
+                border: Border.all(color: riskColor.withValues(alpha: 0.6), width: 1),
+                color: riskColor.withValues(alpha: 0.08),
               ),
               alignment: Alignment.center,
               child: Text(
