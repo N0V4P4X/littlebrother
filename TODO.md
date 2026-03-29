@@ -192,6 +192,72 @@
 
 ---
 
+## Round 2 Fixes (2026-03-29)
+
+### Critical - Compile Errors
+
+#### 2.1 Missing debugPrint import in aggregate_map_screen.dart
+- **File:** `lib/ui/screens/aggregate_map_screen.dart`
+- **Issue:** Uses debugPrint() but doesn't import flutter/foundation
+- **Fix:** Added `import 'package:flutter/foundation.dart' show debugPrint;`
+- **Status:** [FIXED]
+
+#### 2.2 Missing debugPrint import in timeline_screen.dart
+- **File:** `lib/ui/screens/timeline_screen.dart`
+- **Issue:** Uses debugPrint() but doesn't import flutter/foundation
+- **Fix:** Added `import 'package:flutter/foundation.dart' show debugPrint;`
+- **Status:** [FIXED]
+
+### High Priority
+
+#### 2.3 MapController Memory Leak
+- **File:** `lib/ui/screens/aggregate_map_screen.dart`
+- **Issue:** Creates MapController() but no dispose() method
+- **Fix:** Added @override dispose() with _mapController.dispose()
+- **Status:** [FIXED]
+
+#### 2.4 Inefficient getDevicesAtCell Query
+- **File:** `lib/core/db/lb_database.dart:705-728`
+- **Issue:** Self-join + JSON parsing (SUBSTR + INSTR) to extract geohash
+- **Fix:** Use geohash column directly: `SUBSTR(o.geohash, 1, $precision)`
+- **Status:** [FIXED]
+
+#### 2.5 minThreatFlag Filter Inefficient
+- **File:** `lib/core/db/lb_database.dart:699-701`
+- **Issue:** Applies filter in Dart (rows.where()) instead of SQL
+- **Fix:** Added to SQL WHERE clause
+- **Status:** [FIXED]
+
+### Medium Priority
+
+#### 2.6 No Debounce on Filter Changes
+- **File:** `lib/ui/screens/aggregate_map_screen.dart:129-139, 262-316`
+- **Issue:** Rapid filter changes spawn multiple concurrent DB queries
+- **Fix:** Added 300ms debounce timer with _debouncedLoad() helper
+- **Status:** [FIXED]
+
+---
+
+## Round 3 Fixes (2026-03-29)
+
+### High Priority
+
+#### 3.1 Concurrent _load() Race Condition
+- **File:** `lib/ui/screens/aggregate_map_screen.dart`
+- **Issue:** No guard against multiple concurrent `_load()` calls
+- **Fix:** Added `_loadRunning` flag with try-finally to prevent concurrent loads
+- **Status:** [FIXED]
+
+#### 3.2 Test Data in Production Builds
+- **Files:** 
+  - `lib/core/models/lb_aggregate_map.dart` (MockCommunityData, TestThreat)
+  - `lib/ui/screens/aggregate_map_screen.dart` (test layer UI)
+- **Issue:** Test/mock data included in production with warnings
+- **Fix:** Wrapped all test layer code in `kDebugMode` checks - excluded from release builds
+- **Status:** [FIXED]
+
+---
+
 ## Implementation Order
 
 1. [x] Create TODO.md (2026-03-29)
@@ -202,6 +268,7 @@
 6. [x] Memory/performance #4.1 - #4.4 (optimization)
 7. [x] Database #6.1 - #6.2 (scalability)
 8. [x] Logic bugs #8.1 - #8.2 (edge cases)
+9. [x] Round 2 fixes #2.1 - #2.6 (compile errors, performance)
 9. [x] Documentation #9.1 - #9.3 (maintenance)
 
 ---

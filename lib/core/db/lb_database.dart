@@ -687,6 +687,10 @@ class LBDatabase {
       conditions.add('most_recent >= ?');
       args.add(sinceMs);
     }
+    if (minThreatFlag != null) {
+      conditions.add('worst_flag >= ?');
+      args.add(minThreatFlag);
+    }
 
     final rows = await database.query(
       LBDb.tAggregateCells,
@@ -696,9 +700,6 @@ class LBDatabase {
       limit: limit,
     );
 
-    if (minThreatFlag != null) {
-      return rows.where((r) => (r['worst_flag'] as int) >= minThreatFlag).toList();
-    }
     return rows;
   }
 
@@ -711,18 +712,14 @@ class LBDatabase {
         o.signal_type,
         k.vendor,
         COUNT(*) AS obs_count,
-        COUNT(DISTINCT SUBSTR(om.metadata_json,
-          INSTR(om.metadata_json, '"geohash":"') + 11,
-          $precision)) AS cell_count,
+        COUNT(DISTINCT SUBSTR(om.geohash, 1, $precision)) AS cell_count,
         MAX(o.threat_flag) AS worst_flag,
         MIN(o.ts) AS first_seen,
         MAX(o.ts) AS last_seen
       FROM ${LBDb.tObservations} o
       LEFT JOIN ${LBDb.tKnownDevices} k ON k.identifier = o.identifier
       LEFT JOIN ${LBDb.tObservations} om ON om.identifier = o.identifier
-      WHERE SUBSTR(o.metadata_json,
-          INSTR(o.metadata_json, '"geohash":"') + 11,
-          $precision) = ?
+      WHERE SUBSTR(o.geohash, 1, $precision) = ?
       GROUP BY o.identifier
       ORDER BY obs_count DESC
     ''', [geohash]);

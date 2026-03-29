@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -23,6 +24,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   final _mapController = MapController();
   bool _loading = true;
   String? _error;
+  bool _loadRunning = false;
+  Timer? _debounceTimer;
 
   MapLayer _layer = MapLayer.grid;
   bool _includeNeighbors = false;
@@ -42,6 +45,10 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   BleDevice? _selectedBle;
   TestThreat? _selectedTestThreat;
 
+  List<MapLayer> get _visibleLayers => kDebugMode 
+      ? MapLayer.values 
+      : MapLayer.values.where((l) => l != MapLayer.test).toList();
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +56,12 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   }
 
   Future<void> _load() async {
+    if (_loadRunning) return;
+    if (_layer == MapLayer.test && !kDebugMode) {
+      setState(() => _layer = MapLayer.grid);
+      return;
+    }
+    _loadRunning = true;
     setState(() { _loading = true; _error = null; });
     try {
       final sinceMs = _timeRange.cutoffMs;
@@ -109,7 +122,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
             _loading = false;
           });
         }
-      } else if (_layer == MapLayer.test) {
+      } else if (_layer == MapLayer.test && kDebugMode) {
         if (mounted) {
           setState(() {
             _testThreats = MockCommunityData.getMockThreats();
@@ -122,7 +135,14 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       if (mounted) {
         setState(() { _loading = false; _error = e.toString(); });
       }
+    } finally {
+      _loadRunning = false;
     }
+  }
+
+  void _debouncedLoad() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), _load);
   }
 
   void _onLayerChange(MapLayer layer) {
@@ -134,7 +154,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       _selectedBle = null;
       _selectedTestThreat = null;
     });
-    _load();
+    _debouncedLoad();
   }
 
   void _onCellTap(AggregateCell cell) {
@@ -243,7 +263,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
               children: [
                 _label('LAYER'),
                 const SizedBox(width: 4),
-                ...MapLayer.values.map((l) => Padding(
+                ..._visibleLayers.map((l) => Padding(
                   padding: const EdgeInsets.only(right: 4),
                   child: _chip(
                     label: l.label,
@@ -260,7 +280,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                     selected: _includeNeighbors,
                     onTap: () => setState(() {
                       _includeNeighbors = !_includeNeighbors;
-                      _load();
+                      _debouncedLoad();
                     }),
                   ),
                   const SizedBox(width: 12),
@@ -274,7 +294,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                     selected: _timeRange == t,
                     onTap: () => setState(() {
                       _timeRange = t;
-                      _load();
+                      _debouncedLoad();
                     }),
                   ),
                 )),
@@ -288,7 +308,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                     selected: _threatFilter == t,
                     onTap: () => setState(() {
                       _threatFilter = t;
-                      _load();
+                      _debouncedLoad();
                     }),
                   ),
                 )),
@@ -303,7 +323,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                       selected: _precision == p,
                       onTap: () => setState(() {
                         _precision = p;
-                        _load();
+                        _debouncedLoad();
                       }),
                     ),
                   )),
@@ -389,7 +409,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       MapLayer.towers => _towers.isEmpty,
       MapLayer.wifi => _wifiDevices.isEmpty,
       MapLayer.ble => _bleDevices.isEmpty,
-      MapLayer.test => _testThreats.isEmpty,
+      MapLayer.test => kDebugMode ? _testThreats.isEmpty : true,
     };
     
     if (isEmpty) {
@@ -407,7 +427,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                 MapLayer.towers => 'Start a scan session to capture towers',
                 MapLayer.wifi => 'Start a scan session to capture WiFi APs',
                 MapLayer.ble => 'Start a scan session to capture BLE devices',
-                MapLayer.test => 'Test data layer - for development only',
+                MapLayer.test => kDebugMode ? 'Test data layer - for development only' : '',
               },
               style: LBTextStyles.label.copyWith(color: LBColors.dimText),
             ),
@@ -428,7 +448,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
           _buildWifiBottomSheet(_selectedWifi!),
         if (_layer == MapLayer.ble && _selectedBle != null)
           _buildBleBottomSheet(_selectedBle!),
-        if (_layer == MapLayer.test && _selectedTestThreat != null)
+        if (kDebugMode && _layer == MapLayer.test && _selectedTestThreat != null)
           _buildTestBottomSheet(_selectedTestThreat!),
       ],
     );
@@ -465,7 +485,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       MapLayer.towers => _towers.map((t) => _buildTowerMarker(t)).toList(),
       MapLayer.wifi => _wifiDevices.map((w) => _buildWifiMarker(w)).toList(),
       MapLayer.ble => _bleDevices.map((b) => _buildBleMarker(b)).toList(),
-      MapLayer.test => _testThreats.map((t) => _buildTestThreatMarker(t)).toList(),
+      MapLayer.test => kDebugMode ? _testThreats.map((t) => _buildTestThreatMarker(t)).toList() : [],
       MapLayer.grid => <Marker>[],
     };
     
@@ -633,7 +653,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
 
   Widget _buildLegend() {
     final double bottomOffset = (_layer == MapLayer.grid && _selectedGridCell != null) ||
-        (_layer == MapLayer.test && _selectedTestThreat != null) ? 320.0 : 16.0;
+        (kDebugMode && _layer == MapLayer.test && _selectedTestThreat != null) ? 320.0 : 16.0;
     return Positioned(
       bottom: bottomOffset,
       left: 12,
@@ -659,7 +679,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
               _legendBorder(LBColors.green, 'Clean'),
               _legendBorder(LBColors.yellow, 'Watch'),
               _legendBorder(LBColors.red, 'Hostile'),
-            ] else if (_layer == MapLayer.test) ...[
+            ] else if (kDebugMode && _layer == MapLayer.test) ...[
               Text('⚠️ TEST DATA', style: LBTextStyles.label.copyWith(fontSize: 8, letterSpacing: 1.5, color: LBColors.red)),
               const SizedBox(height: 4),
               _legendBorder(LBColors.red, 'StingRay'),
@@ -762,6 +782,13 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       LBThreatFlag.hostile => LBColors.red,
       _                    => LBColors.green,
     };
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _mapController.dispose();
+    super.dispose();
   }
 }
 
