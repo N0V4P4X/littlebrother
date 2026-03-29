@@ -12,6 +12,10 @@ class CellChannelHandler(private val context: Context) {
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     }
 
+    private val locationManager: android.location.LocationManager by lazy {
+        context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+    }
+
     fun getAllCellInfo(result: MethodChannel.Result) {
         try {
             val cells = telephonyManager.allCellInfo ?: run {
@@ -46,10 +50,54 @@ class CellChannelHandler(private val context: Context) {
         }
     }
 
+    fun getCellCapabilities(result: MethodChannel.Result) {
+        val caps = mutableMapOf<String, Any>()
+        val readPhoneState = context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+        val fineLocation = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarseLocation = context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        val hasLocationPermission = fineLocation == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                                    coarseLocation == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasPhoneStatePermission = readPhoneState == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        val locationEnabled = try {
+            locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        } catch (e: Exception) { false }
+
+        val allCellInfoAvailable = try {
+            val test = telephonyManager.allCellInfo
+            test != null
+        } catch (e: SecurityException) { false }
+
+        val allCellInfoEmpty = try {
+            val test = telephonyManager.allCellInfo
+            test == null || test.isEmpty()
+        } catch (e: Exception) { true }
+
+        caps["hasPhoneStatePermission"] = hasPhoneStatePermission
+        caps["hasLocationPermission"] = hasLocationPermission
+        caps["locationEnabled"] = locationEnabled
+        caps["allCellInfoAvailable"] = allCellInfoAvailable
+        caps["allCellInfoEmpty"] = allCellInfoEmpty
+        caps["androidVersion"] = Build.VERSION.SDK_INT
+        caps["manufacturer"] = Build.MANUFACTURER
+        caps["model"] = Build.MODEL
+        caps["supportsNr"] = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+        val diagnosis = when {
+            !hasPhoneStatePermission -> "MISSING_PHONE_STATE_PERMISSION"
+            !hasLocationPermission -> "MISSING_LOCATION_PERMISSION"
+            !locationEnabled -> "LOCATION_DISABLED"
+            !allCellInfoAvailable -> "ALL_CELL_INFO_NOT_AVAILABLE"
+            allCellInfoEmpty -> "ALL_CELL_INFO_EMPTY"
+            else -> "OK"
+        }
+        caps["diagnosis"] = diagnosis
+
+        result.success(caps)
+    }
+
     fun getPhysicalChannels(result: MethodChannel.Result) {
-        // PhysicalChannelConfig requires a registered TelephonyCallback (API 31+)
-        // or PhoneStateListener (API 28–30) — one-shot polling isn't supported.
-        // Returns empty for now; a listener-based implementation is planned for Phase 6.
         result.success(emptyList<Map<String, Any>>())
     }
 

@@ -15,6 +15,8 @@ class LBAnalyzer {
     List<LBSignal> signals, {
     String? geohash,
     int? servingCellChangesPerMinute,
+    int? tacChangesPerMinute,
+    int? neighborInstabilityScore,
   }) async {
     final threats = <LBThreatEvent>[];
 
@@ -30,7 +32,9 @@ class LBAnalyzer {
         serving: serving,
         neighbors: neighbors,
         geohash: geohash,
-        changesPerMinute: servingCellChangesPerMinute ?? 0,
+        servingChangesPerMinute: servingCellChangesPerMinute ?? 0,
+        tacChangesPerMinute: tacChangesPerMinute ?? 0,
+        neighborInstability: neighborInstabilityScore ?? 0,
       );
       if (stingrayResult != null) threats.add(stingrayResult);
     }
@@ -63,7 +67,9 @@ class LBAnalyzer {
     required LBSignal serving,
     required List<LBSignal> neighbors,
     String? geohash,
-    required int changesPerMinute,
+    required int servingChangesPerMinute,
+    required int tacChangesPerMinute,
+    required int neighborInstability,
   }) async {
     final evidence = <String, dynamic>{};
     var score = 0;
@@ -108,13 +114,14 @@ class LBAnalyzer {
       }
     }
 
-    // H4 — Cell ID instability (weight 3)
-    if (changesPerMinute >= LBThresholds.cellIdChurnPerMinute) {
+    // H4 — Serving Cell ID instability (weight 25 — bumped from 3)
+    // A StingRay forces handovers to maintain the illusion; natural handover is slower
+    if (servingChangesPerMinute >= LBThresholds.cellIdChurnPerMinute) {
       evidence['cell_instability'] = {
-        'score': 80, 'weight': 3,
-        'detail': '$changesPerMinute serving cell changes in last 60s',
+        'score': 80, 'weight': 25,
+        'detail': '$servingChangesPerMinute serving cell changes in last 60s',
       };
-      score += 3;
+      score += 25;
     }
 
     // H5 — GSM network type (highest risk — no encryption) (weight 30)
@@ -123,6 +130,48 @@ class LBAnalyzer {
     if (netType == 'GSM') {
       evidence['gsm_network'] = {'score': 60, 'weight': 30, 'detail': 'Currently on unencrypted GSM network'};
       score += 18;
+    }
+
+    // H6 — Timing Advance anomaly (weight 20)
+    // StingRays in close range show anomalous TA values (unusually small = very close)
+    // Natural cells at street level: TA 0-10. A StingRay nearby: TA 0-3
+    final ta = serving.metadata['timing_advance'] as int?;
+    if (ta != null && ta >= 0 && ta <= 3) {
+      // Very low TA with no corresponding proximity explanation
+      final rsrp = serving.metadata['rsrp'] as int? ?? -100;
+      if (rsrp > -85) { // Strong signal + very low TA = suspiciously close
+        evidence['ta_anomaly'] = {
+          'score': 90, 'weight': 20,
+          'detail': 'TA=$ta with strong signal (RSRP=$rsrp dBm) — device appears very close',
+          'timing_advance': ta,
+          'rsrp': rsrp,
+        };
+        score += 20;
+      }
+    }
+
+    // H7 — Neighbor list stability (weight 20)
+    // A StingRay typically suppresses or mimics the real neighbor list
+    if (neighborInstability >= 70) {
+      final detail = neighborInstability >= 90
+          ? 'Neighbor list is perfectly static — likely being suppressed'
+          : 'Neighbor list is suspiciously consistent across scans';
+      evidence['neighbor_stability'] = {
+        'score': neighborInstability, 'weight': 20,
+        'detail': detail,
+        'instability_score': neighborInstability,
+      };
+      score += 20;
+    }
+
+    // H8 — TAC/LAC churn (weight 15)
+    // A StingRay that impersonates multiple cells may cause rapid TAC changes
+    if (tacChangesPerMinute >= 3) {
+      evidence['tac_churn'] = {
+        'score': 75, 'weight': 15,
+        'detail': '$tacChangesPerMinute TAC changes in last 60s — area tracking area is unstable',
+      };
+      score += 15;
     }
 
     if (score < 10) return null;

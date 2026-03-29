@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart' show Color;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
@@ -81,6 +84,15 @@ class AlertEngine {
     final isCritical = event.severity >= LBSeverity.critical;
     final ledColor   = _severityColor(event.severity);
 
+    ByteArrayAndroidBitmap? largeIcon;
+    try {
+      final bytes = await rootBundle.load('assets/icons/ic_notification.png');
+      final buffer = bytes.buffer.asUint8List();
+      largeIcon = ByteArrayAndroidBitmap.fromBase64String(base64Encode(buffer));
+    } catch (e) {
+      debugPrint('LB_ALERT failed to load large icon asset: $e');
+    }
+
     final androidDetails = AndroidNotificationDetails(
       'lb_threats',
       'LittleBrother Threats',
@@ -92,6 +104,8 @@ class AlertEngine {
       ledColor: ledColor,
       ledOnMs: 500,
       ledOffMs: 500,
+      icon: 'ic_notification',
+      largeIcon: largeIcon,
     );
 
     const iosDetails = DarwinNotificationDetails(

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Outer ring -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12m-9,0a9,9 0,1 1,18 0a9,9 0,1 1,-18 0"/>
+    <!-- Dark inner circle (creates ring effect) -->
+    <path
+        android:fillColor="#0A0A0A"
+        android:pathData="M12,12m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0"/>
+    <!-- Inner dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0"/>
+    <!-- Crosshair vertical -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,1L12,5M12,19L12,23"/>
+    <!-- Crosshair horizontal -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M1,12L5,12M19,12L23,12"/>
+</vector>

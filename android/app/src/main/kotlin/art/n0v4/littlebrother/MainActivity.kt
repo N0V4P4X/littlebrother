@@ -54,6 +54,7 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "getAllCellInfo"         -> cellHandler.getAllCellInfo(result)
                     "getServiceState"        -> cellHandler.getServiceState(result)
+                    "getCellCapabilities"    -> cellHandler.getCellCapabilities(result)
                     "getPhysicalChannels"    -> cellHandler.getPhysicalChannels(result)
                     else                     -> result.notImplemented()
                 }

@@ -1,1 +1,34 @@
-build
+# Flutter
+build/
+.dart_tool/
+.packages
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Android
+android/.gradle/
+android/app/build/
+android/build/
+*.jks
+*.keystore
+*.apk
+*.aab
+*.dex
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Logs
+*.log
+
+# Local config (may contain secrets)
+.env
+.env.*
+config.json

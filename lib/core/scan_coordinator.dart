@@ -239,6 +239,8 @@ class ScanCoordinator {
       geotagged,
       geohash: _gps.currentGeohash,
       servingCellChangesPerMinute: _cell.servingCellChangesPerMinute(),
+      tacChangesPerMinute: _cell.tacChangesPerMinute(),
+      neighborInstabilityScore: _cell.neighborInstabilityScore(),
     );
     if (threats.isNotEmpty) {
       await _alerts.handleThreatEvents(threats);
