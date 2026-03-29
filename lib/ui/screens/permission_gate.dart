@@ -1,20 +1,133 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:littlebrother/ui/theme/lb_theme.dart';
 
-// Native channel for permissions that permission_handler mishandles on Samsung
 const _nativePerms = MethodChannel('art.n0v4.littlebrother/permissions');
 
-class PermissionGate extends StatefulWidget {
+class PermissionGate extends StatelessWidget {
   final Widget child;
   const PermissionGate({super.key, required this.child});
 
   @override
-  State<PermissionGate> createState() => _PermissionGateState();
+  Widget build(BuildContext context) {
+    if (!Platform.isAndroid) {
+      return _NonAndroidGate(child: child);
+    }
+    return _AndroidPermissionGate(child: child);
+  }
 }
 
-class _PermissionGateState extends State<PermissionGate>
+class _NonAndroidGate extends StatefulWidget {
+  final Widget child;
+  const _NonAndroidGate({required this.child});
+
+  @override
+  State<_NonAndroidGate> createState() => _NonAndroidGateState();
+}
+
+class _NonAndroidGateState extends State<_NonAndroidGate> {
+  bool _accepted = false;
+
+  String get _platformName {
+    if (Platform.isIOS)     return 'iOS';
+    if (Platform.isMacOS)   return 'macOS';
+    if (Platform.isLinux)   return 'Linux';
+    if (Platform.isWindows) return 'Windows';
+    return 'this platform';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_accepted) return widget.child;
+    return Scaffold(
+      backgroundColor: LBColors.background,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 24),
+              Text('LITTLEBROTHER',
+                  style: LBTextStyles.displayLarge.copyWith(color: LBColors.blue)),
+              const SizedBox(height: 4),
+              Text('Passive RF Intelligence',
+                  style: LBTextStyles.label.copyWith(letterSpacing: 1.5)),
+              const SizedBox(height: 32),
+              Text('PLATFORM NOTICE',
+                  style: LBTextStyles.label.copyWith(
+                      color: LBColors.cyan, letterSpacing: 2, fontSize: 11)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: LBColors.blue.withAlpha(20),
+                  border: Border.all(color: LBColors.blue.withAlpha(80)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline, color: LBColors.blue, size: 16),
+                        const SizedBox(width: 8),
+                        Text('Running on $_platformName',
+                            style: LBTextStyles.body.copyWith(fontSize: 12, color: LBColors.blue)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'LittleBrother is built for Android. '
+                      'Wi-Fi (${Platform.isLinux ? 'nmcli' : Platform.isMacOS ? 'networksetup' : 'limited'}) and BLE scanning are available. '
+                      'Cellular, GPS, and OPSEC features require an Android device.',
+                      style: LBTextStyles.body.copyWith(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _InfoCard(
+                text: 'Some features are disabled on $_platformName. '
+                    'For full RF intelligence, use the Android app.',
+                color: LBColors.orange,
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => setState(() => _accepted = true),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: LBColors.blue.withAlpha(25),
+                    border: Border.all(color: LBColors.blue),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text('CONTINUE',
+                      style: LBTextStyles.body.copyWith(
+                          color: LBColors.blue, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AndroidPermissionGate extends StatefulWidget {
+  final Widget child;
+  const _AndroidPermissionGate({required this.child});
+
+  @override
+  State<_AndroidPermissionGate> createState() => _AndroidPermissionGateState();
+}
+
+class _AndroidPermissionGateState extends State<_AndroidPermissionGate>
     with WidgetsBindingObserver {
   bool _checking = true;
   Map<String, _PermInfo> _perms = {};

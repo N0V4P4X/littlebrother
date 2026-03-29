@@ -7,6 +7,7 @@ import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/db/oui_lookup.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/core/platform/platform_info.dart';
 import 'package:littlebrother/core/wake_lock.dart';
 import 'package:littlebrother/modules/ble/ble_scanner.dart';
 import 'package:littlebrother/modules/cell/cell_scanner.dart';
@@ -58,16 +59,16 @@ class ScanCoordinator {
   StreamSubscription<List<LBSignal>>? _cellSub;
 
   Future<void> init() async {
-    debugPrint('LB_COORD init start');
+    debugPrint('LB_COORD init start (${LBPlatform.name})');
     await OuiLookup.instance.init();
     debugPrint('LB_COORD OUI loaded');
 
-    _alerts  = AlertEngine(_db);
-    _opsec   = OpsecController();
-    _wifi    = WifiScanner();
-    _ble     = BleScanner();
-    _cell    = CellScanner();
-    _gps     = GpsTracker();
+    _alerts   = AlertEngine(_db);
+    _opsec    = OpsecController();
+    _wifi     = WifiScanner();
+    _ble      = BleScanner();
+    _cell     = CellScanner();
+    _gps      = GpsTracker();
     _analyzer = LBAnalyzer(_db);
 
     try {
@@ -76,14 +77,19 @@ class ScanCoordinator {
     } catch (e) {
       debugPrint('LB_COORD alerts init failed (non-fatal): $e');
     }
-    await _opsec.init();
-    debugPrint('LB_COORD opsec init done');
+
+    if (LBPlatform.supportsRfKill) {
+      await _opsec.init();
+      debugPrint('LB_COORD opsec init done');
+      _alerts.onOpsecTrigger = () async {
+        await _opsec.killRf();
+      };
+    } else {
+      debugPrint('LB_COORD opsec: not available on ${LBPlatform.name}');
+    }
+
     await _gps.start();
     debugPrint('LB_COORD gps started');
-
-    _alerts.onOpsecTrigger = () async {
-      await _opsec.killRf();
-    };
 
     _alerts.threatStream.listen((_) {
       _threatCount++;
@@ -135,12 +141,24 @@ class ScanCoordinator {
       await _ble.start(_sessionId!);
       debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
 
-      debugPrint('LB_COORD starting cell scanner');
-      await _cell.start(_sessionId!);
-      debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
+      if (LBPlatform.supportsCellScanning) {
+        debugPrint('LB_COORD starting cell scanner');
+        _cellSub = _cell.stream.listen((signals) {
+          debugPrint('LB_COORD cell batch: ${signals.length} signals');
+          _onSignals(signals);
+        }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'), onDone: () {
+          debugPrint('LB_COORD cell stream done');
+        });
+        await _cell.start(_sessionId!);
+        debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
+      } else {
+        debugPrint('LB_COORD cell scanner: not available on ${LBPlatform.name}');
+      }
 
-      await LBWakeLock.acquire();
-      debugPrint('LB_COORD wake lock acquired');
+      if (LBPlatform.supportsWakeLock) {
+        await LBWakeLock.acquire();
+        debugPrint('LB_COORD wake lock acquired');
+      }
     } catch (e, st) {
       debugPrint('LB_COORD startScan ERROR: $e\n$st');
     }
@@ -150,8 +168,12 @@ class ScanCoordinator {
     if (!isScanning) return;
     await _wifi.stop();
     await _ble.stop();
-    await _cell.stop();
-    await LBWakeLock.release();
+    if (LBPlatform.supportsCellScanning) {
+      await _cell.stop();
+    }
+    if (LBPlatform.supportsWakeLock) {
+      await LBWakeLock.release();
+    }
     _wifiSub?.cancel();
     _bleSub?.cancel();
     _cellSub?.cancel();
@@ -238,9 +260,12 @@ class ScanCoordinator {
     final threats = await _analyzer.analyze(
       geotagged,
       geohash: _gps.currentGeohash,
-      servingCellChangesPerMinute: _cell.servingCellChangesPerMinute(),
-      tacChangesPerMinute: _cell.tacChangesPerMinute(),
-      neighborInstabilityScore: _cell.neighborInstabilityScore(),
+      servingCellChangesPerMinute: LBPlatform.supportsCellScanning
+          ? _cell.servingCellChangesPerMinute() : 0,
+      tacChangesPerMinute: LBPlatform.supportsCellScanning
+          ? _cell.tacChangesPerMinute() : 0,
+      neighborInstabilityScore: LBPlatform.supportsCellScanning
+          ? _cell.neighborInstabilityScore() : 0,
     );
     if (threats.isNotEmpty) {
       await _alerts.handleThreatEvents(threats);
@@ -262,7 +287,9 @@ class ScanCoordinator {
     stopScan();
     _wifi.dispose();
     _ble.dispose();
-    _cell.dispose();
+    if (LBPlatform.supportsCellScanning) {
+      _cell.dispose();
+    }
     _gps.dispose();
     _alerts.dispose();
     _signalCtrl.close();
