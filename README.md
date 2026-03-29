@@ -106,7 +106,7 @@ Isolate persistent static nodes (cell towers, fixed BLE beacons, static rogue AP
 - **Notifications**: ✅ `flutter_local_notifications`
 - **OPSEC (airplane mode)**: ❌ No system control — stub with log warning
 
-**Required**: Replace Android Kotlin native channels with Dart CLI wrappers where native APIs don't exist.
+Platform-specific implementations use Dart conditional imports: Android impl + Linux impl + stub for all unsupported platforms. Code that calls native channels is gated behind `LBPlatform` capability flags — no crashes on non-Android.
 
 ### macOS
 
@@ -143,12 +143,12 @@ Platform-specific code is isolated behind abstract interfaces:
 
 ```
 ScanCoordinator
-├── WifiScanner      → WifiScannerAndroid / LinuxWifiScanner / MacWifiScanner / WindowsWifiScanner
+├── WifiScanner      → WifiScannerAndroid / WifiScannerLinux / *_Stub
 ├── BleScanner       → flutter_blue_plus (cross-platform)
-├── CellScanner      → CellScannerAndroid / CellScannerStub (all non-Android)
-├── GpsTracker      → GeolocatorWrapper (cross-platform)
-├── AlertEngine     → cross-platform
-└── OpsecController → OpsecControllerAndroid / OpsecControllerStub
+├── CellScanner      → CellScannerAndroid / CellScannerLinux / CellScannerStub
+├── GpsTracker       → GeolocatorWrapper (cross-platform)
+├── AlertEngine      → cross-platform
+└── OpsecController  → OpsecControllerAndroid / OpsecControllerLinux / OpsecControllerStub
 ```
 
 Detection algorithms (stingray, rogue AP, BLE tracker) are platform-agnostic and run identically everywhere.
@@ -161,7 +161,16 @@ Detection algorithms (stingray, rogue AP, BLE tracker) are platform-agnostic and
 
 ## Setup on Debian (N3XU5)
 
-### 1. Install Flutter
+### 1. Install build dependencies
+
+```bash
+# lld-19 is required by Flutter's native assets build step.
+# Without it, `flutter build linux` fails with:
+# "Failed to find any of [ld.lld, ld] in LocalDirectory: '/usr/lib/llvm-19/bin'"
+sudo apt install -y lld-19
+```
+
+### 2. Install Flutter
 
 ```bash
 cd ~/DevOps
@@ -171,7 +180,7 @@ source ~/.bashrc
 flutter doctor
 ```
 
-### 2. Android SDK (if not already present)
+### 3. Android SDK (if not already present)
 
 ```bash
 # Install via Android Studio or:
@@ -271,9 +280,69 @@ android/app/src/main/kotlin/art/n0v4/littlebrother/
 ├── PermissionChannelHandler.kt        # Native permission requests (Samsung-safe)
 └── WakeLockHandler.kt                 # Partial wakelock for background scan
 
+ios/
+├── Runner/
+│   ├── Info.plist                     # Permission strings (Bluetooth, Location, Local Network)
+│   └── Runner.entitlements            # wifi-info + app-groups entitlements
+└── Podfile                            # iOS deployment target (13.0)
+
+linux/
+├── CMakeLists.txt                     # Linux desktop build (CMake + Ninja)
+├── runner/                            # GTK application entry point
+└── flutter/                           # Flutter plugin registration
+
 scripts/
 └── gen_oui.py                         # IEEE OUI table generator (run once)
+
+tool/
+└── lb_cli.dart                        # Gridland CLI/TUI entry point (planned)
+
+tool/
+└── lb_cli.dart                        # Gridland CLI/TUI entry point (planned)
 ```
+
+---
+
+## Data Transfer Between Clients
+
+Scan data is portable across all LittleBrother clients (Android, Linux, macOS, Windows). Sessions, signals, and threat logs are stored in a local SQLite database — transfer it between devices to consolidate intel from multiple capture points.
+
+**Database location:**
+- Android / Linux / macOS: `{app_documents_dir}/lbscan.db`
+- Windows: `%APPDATA%\littlebrother\lbscan.db`
+
+**Transfer options:**
+
+1. **Copy the DB file** — stop the app, copy `lbscan.db` to the target device, replace the local DB. All sessions, threat events, and GPS breadcrumbs transfer as-is.
+
+2. **Export to CSV** — the Intel Timeline screen exports per-session CSV: timestamp, signal type, MAC/BSSID/Cell ID, RSSI, GPS coordinates, threat verdict. Useful for ingestion into external GIS or SIEM tools.
+
+3. **SQLite direct** — the DB schema is in `lib/core/db/lb_database.dart`. Any SQLite client (sqlite3, DBeaver, etc.) can query or migrate data.
+
+The DB schema uses `LBSession` as the top-level container. Each session owns its signals and threat events — moving a session record and its joined rows transfers a complete intel snapshot.
+
+---
+
+## Gridland CLI/TUI
+
+> **Planned** — Gridland (gridland.io) is not yet production-ready. This section describes the intended architecture.
+
+LittleBrother will ship a terminal-based companion tool built with **Gridland**, a cross-platform TUI framework that also renders in the browser. This enables:
+
+- **Headless wardriving** on a Raspberry Pi or laptop — passive RF capture without a display
+- **Server-side session processing** — ingest DB files, run analysis, output reports
+- **CI/CD integration** — run stingray/rogue-AP heuristics against exported data in pipelines
+
+**Architecture:** The CLI shares the core Dart modules with the Flutter app (`lib/core`, `lib/modules`, `lib/analyzer`, `lib/db`) via a separate entry point at `tool/lb_cli.dart`. Only the UI layer and platform-specific code diverge. Detection algorithms, signal models, and the DB layer are identical in both the Flutter app and the CLI.
+
+```bash
+# Planned usage
+lb --db /path/to/lbscan.db --session 2026-03-29-wardrive analyze
+lb --db /path/to/lbscan.db export-csv --output report.csv
+lb --db /path/to/lbscan.db map --geojson out.geojson
+```
+
+Integration will begin once Gridland stabilizes beyond v0.
 
 ---
 
@@ -296,8 +365,12 @@ scripts/
 - [ ] **P6** — Cell map overlay (OpenStreetMap / Google Maps)
 - [ ] **P6** — OpenCelliD sync (seed baseline from public cell tower DB)
 - [ ] **P6** — PhysicalChannelConfig listener (band + channel width telemetry)
+- [x] **P7 partial** — Cross-platform stubs (wake_lock, opsec_controller, cell_scanner, wifi_scanner) with conditional imports — Android + Linux + stub pattern
+- [x] **P7 partial** — PermissionGate platform guard (Android: full permission flow; non-Android: feature availability notice + continue)
+- [x] **P7 partial** — ScanCoordinator platform-awareness (gates Android-only features via LBPlatform flags)
+- [x] **P7 partial** — Linux scaffold + build (BLE via BlueZ, Wi-Fi via nmcli, GPS via Geolocator/GeoClue, cell stub)
+- [x] **P7 partial** — iOS files (Info.plist, entitlements, Podfile) with graceful degradation
 - [ ] **P7** — iOS port (full graceful degradation)
-- [ ] **P7** — Linux port (BLE + Wi-Fi via nmcli + BlueZ)
 - [ ] **P7** — macOS / Windows port
 - [ ] **P8** — P25 / LMR scanner (RTL-SDR + dsd-neo NDK build)
 - [ ] **P8** — ADS-B aircraft tracker (RTL-SDR + Mode S decoder)
