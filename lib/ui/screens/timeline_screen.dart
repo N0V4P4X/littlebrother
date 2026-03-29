@@ -73,9 +73,15 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final file = File('${dir.path}/littlebrother_session_$ts.csv');
     await file.writeAsString(buffer.toString());
     
-    await SharePlus.instance.share(
-      ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Session Export'),
-    );
+    try {
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Session Export'),
+      );
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
   }
 
   Future<void> _exportThreats() async {
@@ -101,9 +107,15 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final file = File('${dir.path}/littlebrother_threats_$ts.csv');
     await file.writeAsString(buffer.toString());
     
-    await SharePlus.instance.share(
-      ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Threat Export'),
-    );
+    try {
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(file.path)], subject: 'LittleBrother Threat Export'),
+      );
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
   }
 
   @override

@@ -1,7 +1,7 @@
 name: littlebrother
-description: Passive RF intelligence platform — Wi-Fi, BLE, cellular SIGINT and IMSI detection.
+description: Passive RF intelligence platform — WiFi, BLE, cellular SIGINT and IMSI detection.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.5.0
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -23,6 +23,8 @@ dependencies:
   # ── UI / rendering ─────────────────────────────────────────────────────
   fl_chart: ^0.69.0                # RSSI history graphs — pinned for compat
   flutter_local_notifications: '>=18.0.0 <19.0.0'  # pin to resolved v18 API
+  flutter_map: ^7.0.0             # OpenStreetMap tiles (free, no API key)
+  latlong2: ^0.9.0                 # Lat/lon utilities for flutter_map
 
   # ── Permissions ────────────────────────────────────────────────────────
   permission_handler: ^12.0.1

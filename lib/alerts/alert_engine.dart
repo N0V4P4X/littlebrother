@@ -22,6 +22,18 @@ class AlertEngine {
 
   final _recentAlerts = <String, DateTime>{};
   static const _alertCooldown = Duration(minutes: 5);
+  static const _maxRecentAlerts = 1000;
+
+  void _cleanupOldAlerts() {
+    final cutoff = DateTime.now().subtract(_alertCooldown * 2);
+    _recentAlerts.removeWhere((_, ts) => ts.isBefore(cutoff));
+    if (_recentAlerts.length > _maxRecentAlerts) {
+      final sorted = _recentAlerts.keys.toList()
+        ..sort((a, b) => _recentAlerts[a]!.compareTo(_recentAlerts[b]!));
+      final toRemove = sorted.take(_recentAlerts.length - _maxRecentAlerts);
+      _recentAlerts.removeWhere((k, _) => toRemove.contains(k));
+    }
+  }
 
   AlertEngine(this._db);
 
@@ -54,6 +66,7 @@ class AlertEngine {
   }
 
   Future<void> _route(LBThreatEvent event) async {
+    _cleanupOldAlerts();
     final key = '${event.threatType}:${event.identifier}';
     final lastAlert = _recentAlerts[key];
     if (lastAlert != null &&

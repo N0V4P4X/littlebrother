@@ -60,7 +60,7 @@ class CellScanner {
   Timer? _timer;
   final _controller = StreamController<List<LBSignal>>.broadcast();
 
-  final _servingCellHistory = <({String cellKey, DateTime ts})>[];
+  final _servingCellHistory = <({String cellKey, DateTime ts, int? timingAdvance})>[];
   final _tacHistory = <({String tac, DateTime ts})>[];
   final _neighborSnapshots = <({List<String> neighbors, DateTime ts})>[];
 
@@ -96,7 +96,9 @@ class CellScanner {
         if (capsRaw != null) {
           _lastCapabilities = CellCapabilities.fromMap(Map<String, dynamic>.from(capsRaw as Map));
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('LB_CELL getCellCapabilities error: $e');
+      }
 
       final List<dynamic> rawCells =
           await _channel.invokeMethod('getAllCellInfo') as List<dynamic>;
@@ -131,7 +133,8 @@ class CellScanner {
 
       final serving = signals.where((s) => s.metadata['is_serving'] == true).firstOrNull;
       if (serving != null) {
-        _servingCellHistory.add((cellKey: serving.identifier, ts: now));
+        final ta = serving.metadata['timingAdvance'] as int?;
+        _servingCellHistory.add((cellKey: serving.identifier, ts: now, timingAdvance: ta));
         final cutoff = now.subtract(const Duration(minutes: 2));
         _servingCellHistory.removeWhere((e) => e.ts.isBefore(cutoff));
 
@@ -276,7 +279,7 @@ class CellScanner {
     final cutoff = DateTime.now().subtract(const Duration(minutes: 1));
     final recent = _servingCellHistory
         .where((e) => e.ts.isAfter(cutoff))
-        .map((e) => e.cellKey)
+        .map<String>((e) => e.cellKey)
         .toList();
     if (recent.length < 2) return 0;
     var changes = 0;
@@ -324,8 +327,9 @@ class CellScanner {
     final now = DateTime.now();
     final cutoff = now.subtract(const Duration(seconds: 30));
     for (var i = _servingCellHistory.length - 1; i >= 0; i--) {
-      if (_servingCellHistory[i].ts.isAfter(cutoff)) {
-        return null;
+      final entry = _servingCellHistory[i];
+      if (entry.ts.isAfter(cutoff) && entry.timingAdvance != null) {
+        return entry.timingAdvance;
       }
     }
     return null;

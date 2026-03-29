@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:latlong2/latlong.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/db/geohash.dart';
+import 'package:littlebrother/core/models/lb_aggregate_map.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 
 class LBDatabase {
@@ -10,9 +15,20 @@ class LBDatabase {
   static final LBDatabase instance = LBDatabase._();
 
   Database? _db;
+  Completer<Database>? _dbCompleter;
 
   Future<Database> get db async {
-    _db ??= await _open();
+    if (_db != null) return _db!;
+    if (_dbCompleter != null) return _dbCompleter!.future;
+    _dbCompleter = Completer<Database>();
+    try {
+      _db = await _open();
+      _dbCompleter!.complete(_db);
+    } catch (e) {
+      _dbCompleter!.completeError(e);
+      _dbCompleter = null;
+      rethrow;
+    }
     return _db!;
   }
 
@@ -161,6 +177,10 @@ class LBDatabase {
         )
       ''');
     }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE ${LBDb.tObservations} ADD COLUMN geohash TEXT');
+      await db.execute('CREATE INDEX idx_obs_geohash ON ${LBDb.tObservations}(geohash)');
+    }
   }
 
   // ── Session DAO ──────────────────────────────────────────────────────────
@@ -195,22 +215,32 @@ class LBDatabase {
 
   Future<void> insertObservationBatch(List<LBSignal> signals) async {
     if (signals.isEmpty) return;
-    final database = await db;
-    final batch = database.batch();
-    for (final s in signals) {
-      batch.insert(LBDb.tObservations, s.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
+    try {
+      final database = await db;
+      final batch = database.batch();
+      for (final s in signals) {
+        final map = s.toMap();
+        if (s.lat != null && s.lon != null) {
+          map['geohash'] = Geohash.encode(s.lat!, s.lon!, precision: 7);
+        }
+        batch.insert(LBDb.tObservations, map,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await batch.commit(noResult: true);
+    } catch (e) {
+      debugPrint('LB_DB insertObservationBatch error: $e');
     }
-    await batch.commit(noResult: true);
   }
 
-  Future<List<LBSignal>> getObservationsBySession(String sessionId) async {
+  Future<List<LBSignal>> getObservationsBySession(String sessionId, {int? limit, int? offset}) async {
     final database = await db;
     final rows = await database.query(
       LBDb.tObservations,
       where: 'session_id = ?',
       whereArgs: [sessionId],
       orderBy: 'ts DESC',
+      limit: limit,
+      offset: offset,
     );
     return rows.map(LBSignal.fromMap).toList();
   }
@@ -350,6 +380,207 @@ class LBDatabase {
     );
   }
 
+  Future<List<CellTower>> getCellTowers({
+    int? minSeverity,
+    int? sinceMs,
+    bool includeNeighbors = false,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    
+    final conditions = <String>['lat IS NOT NULL', 'lon IS NOT NULL'];
+    final args = <dynamic>[];
+    
+    if (!includeNeighbors) {
+      conditions.add("signal_type = 'cell'");
+    } else {
+      conditions.add("signal_type IN ('cell', 'cell_neighbor')");
+    }
+    
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+
+    final where = conditions.join(' AND ');
+
+    final rows = await database.rawQuery('''
+      SELECT 
+        o.identifier as cell_key,
+        o.display_name,
+        MAX(o.metadata_json) as metadata_json,
+        AVG(CAST(o.rssi AS REAL)) as avg_rssi,
+        MAX(CAST(o.rssi AS INT)) as rssi,
+        COUNT(*) as obs_count,
+        MIN(o.ts) as first_seen,
+        MAX(o.ts) as last_seen,
+        MAX(o.lat) as lat,
+        MAX(o.lon) as lon,
+        MAX(CAST(o.threat_flag AS INT)) as worst_flag,
+        MAX(t.severity) as max_severity
+      FROM ${LBDb.tObservations} o
+      LEFT JOIN ${LBDb.tThreatEvents} t ON o.identifier = t.identifier AND t.dismissed = 0
+      WHERE $where
+      GROUP BY o.identifier
+      ORDER BY obs_count DESC
+      LIMIT ?
+    ''', [...args, limit]);
+
+    return rows.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      
+      return CellTower(
+        cellKey:         row['cell_key'] as String,
+        displayName:     row['display_name'] as String? ?? '',
+        pci:             (meta['pci'] as num?)?.toInt() ?? -1,
+        tac:             (meta['tac'] as num?)?.toInt() ?? -1,
+        networkType:     meta['network_type_name'] as String? ?? 
+                         (meta['type'] as String?) ?? '?',
+        band:            meta['band'] as String?,
+        operator:        meta['operator'] as String?,
+        isServing:       (meta['is_serving'] as bool?) ?? false,
+        position:         LatLng(row['lat'] as double, row['lon'] as double),
+        observationCount: row['obs_count'] as int,
+        worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
+        worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
+        rsrp:            (meta['rsrp'] as num?)?.toInt() ?? -120,
+        rsrq:            (meta['rsrq'] as num?)?.toInt() ?? -20,
+        sinr:            (meta['sinr'] as num?)?.toInt() ?? -20,
+        firstSeen:       DateTime.fromMillisecondsSinceEpoch(row['first_seen'] as int),
+        lastSeen:        DateTime.fromMillisecondsSinceEpoch(row['last_seen'] as int),
+      );
+    }).toList();
+  }
+
+  Map<String, dynamic> _parseJson(String json) {
+    try {
+      return Map<String, dynamic>.from(
+        const JsonDecoder().convert(json) as Map,
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<List<WifiDevice>> getWifiDevices({
+    int? minSeverity,
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    
+    final conditions = <String>['lat IS NOT NULL', 'lon IS NOT NULL', "signal_type = 'wifi'"];
+    final args = <dynamic>[];
+    
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+
+    final rows = await database.rawQuery('''
+      SELECT 
+        o.identifier as bssid,
+        o.display_name as ssid,
+        MAX(o.metadata_json) as metadata_json,
+        AVG(CAST(o.rssi AS REAL)) as avg_rssi,
+        MAX(CAST(o.rssi AS INT)) as rssi,
+        COUNT(*) as obs_count,
+        MIN(o.ts) as first_seen,
+        MAX(o.ts) as last_seen,
+        MAX(o.lat) as lat,
+        MAX(o.lon) as lon,
+        MAX(CAST(o.threat_flag AS INT)) as worst_flag,
+        MAX(t.severity) as max_severity
+      FROM ${LBDb.tObservations} o
+      LEFT JOIN ${LBDb.tThreatEvents} t ON o.identifier = t.identifier AND t.dismissed = 0
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY o.identifier
+      ORDER BY obs_count DESC
+      LIMIT ?
+    ''', [...args, limit]);
+
+    return rows.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      
+      return WifiDevice(
+        bssid:            row['bssid'] as String,
+        ssid:             row['ssid'] as String? ?? '',
+        vendor:           meta['vendor'] as String? ?? '',
+        position:         LatLng(row['lat'] as double, row['lon'] as double),
+        observationCount: row['obs_count'] as int,
+        worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
+        worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
+        rssi:            row['rssi'] as int? ?? -100,
+        channel:         (meta['channel'] as num?)?.toInt(),
+        security:        meta['capabilities'] as String?,
+        firstSeen:       DateTime.fromMillisecondsSinceEpoch(row['first_seen'] as int),
+        lastSeen:        DateTime.fromMillisecondsSinceEpoch(row['last_seen'] as int),
+      );
+    }).toList();
+  }
+
+  Future<List<BleDevice>> getBleDevices({
+    int? minSeverity,
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    
+    final conditions = <String>['lat IS NOT NULL', 'lon IS NOT NULL', "signal_type = 'ble'"];
+    final args = <dynamic>[];
+    
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+
+    final rows = await database.rawQuery('''
+      SELECT 
+        o.identifier as mac,
+        o.display_name,
+        MAX(o.metadata_json) as metadata_json,
+        AVG(CAST(o.rssi AS REAL)) as avg_rssi,
+        MAX(CAST(o.rssi AS INT)) as rssi,
+        COUNT(*) as obs_count,
+        MIN(o.ts) as first_seen,
+        MAX(o.ts) as last_seen,
+        MAX(o.lat) as lat,
+        MAX(o.lon) as lon,
+        MAX(CAST(o.threat_flag AS INT)) as worst_flag,
+        MAX(t.severity) as max_severity
+      FROM ${LBDb.tObservations} o
+      LEFT JOIN ${LBDb.tThreatEvents} t ON o.identifier = t.identifier AND t.dismissed = 0
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY o.identifier
+      ORDER BY obs_count DESC
+      LIMIT ?
+    ''', [...args, limit]);
+
+    return rows.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      
+      return BleDevice(
+        mac:              row['mac'] as String,
+        displayName:      row['display_name'] as String? ?? '',
+        position:         LatLng(row['lat'] as double, row['lon'] as double),
+        observationCount: row['obs_count'] as int,
+        worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
+        worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
+        rssi:            row['rssi'] as int? ?? -100,
+        isTracker:       meta['is_tracker'] as bool? ?? false,
+        txPower:         (meta['tx_power'] as num?)?.toInt(),
+        firstSeen:       DateTime.fromMillisecondsSinceEpoch(row['first_seen'] as int),
+        lastSeen:        DateTime.fromMillisecondsSinceEpoch(row['last_seen'] as int),
+      );
+    }).toList();
+  }
+
   // ── Threat Events DAO ────────────────────────────────────────────────────
 
   Future<int> insertThreatEvent(LBThreatEvent event) async {
@@ -360,6 +591,7 @@ class LBDatabase {
   Future<List<LBThreatEvent>> getThreatEvents({
     bool includeDismissed = false,
     int limit = 100,
+    int? offset,
     int? minSeverity,
   }) async {
     final database = await db;
@@ -379,6 +611,7 @@ class LBDatabase {
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'ts DESC',
       limit: limit,
+      offset: offset,
     );
     return rows.map(LBThreatEvent.fromMap).toList();
   }
@@ -395,7 +628,16 @@ class LBDatabase {
 
   // ── Aggregate Map DAO ───────────────────────────────────────────────────
 
-  Future<void> rebuildAggregateCells({int precision = 7}) async {
+  static int? _lastRebuildMs;
+  static const _rebuildIntervalMs = 5 * 60 * 1000; // 5 minutes
+
+  Future<void> rebuildAggregateCells({int precision = 7, bool force = false}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!force && _lastRebuildMs != null && (now - _lastRebuildMs!) < _rebuildIntervalMs) {
+      return;
+    }
+    _lastRebuildMs = now;
+    
     final database = await db;
     await database.delete(
       LBDb.tAggregateCells,
@@ -408,9 +650,10 @@ class LBDatabase {
         (geohash, precision, device_count, obs_count, worst_flag,
          wifi_count, ble_count, cell_count, most_recent)
       SELECT
-        SUBSTR(o.metadata_json,
-          INSTR(o.metadata_json, '"geohash":"') + 11,
-          $precision) AS geohash,
+        COALESCE(
+          o.geohash,
+          SUBSTR(o.metadata_json, INSTR(o.metadata_json, '"geohash":"') + 11, $precision)
+        ) AS geohash,
         $precision,
         COUNT(DISTINCT o.identifier) AS device_count,
         COUNT(*) AS obs_count,
@@ -430,6 +673,7 @@ class LBDatabase {
     int? minObs,
     int? minThreatFlag,
     int? sinceMs,
+    int? limit,
   }) async {
     final database = await db;
     final conditions = <String>['precision = ?'];
@@ -449,6 +693,7 @@ class LBDatabase {
       where: conditions.join(' AND '),
       whereArgs: args,
       orderBy: 'obs_count DESC',
+      limit: limit,
     );
 
     if (minThreatFlag != null) {

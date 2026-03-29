@@ -2,15 +2,17 @@
 
 Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · Evasion Automation
 
-Version: 0.1.0-alpha (Phase 1–5 partial)
+Version: 0.5.0 (2026-03-29)
 
-> **Platform**: Android primary · iOS/Linux/macOS/Windows planned (full feature parity)
+> **Platform**: Android primary · Linux desktop · iOS/macOS/Windows planned
 
 ---
 
 ## Feature Roadmap
 
-### Currently Supported (Android)
+### Currently Supported
+
+#### Android
 
 | Signal Type | Hardware | Coverage |
 |-------------|----------|----------|
@@ -18,6 +20,15 @@ Version: 0.1.0-alpha (Phase 1–5 partial)
 | BLE Devices | Built-in Bluetooth | 2.4 GHz |
 | Cellular (LTE/NR/GSM/UMTS/CDMA) | Built-in modem | 600 MHz – 6 GHz |
 | GPS Position | Built-in GPS/GNSS | L1 band |
+
+#### Linux Desktop
+
+| Signal | Implementation | Notes |
+|--------|---------------|-------|
+| WiFi | `nmcli` (NetworkManager) | Works out of box |
+| BLE | `flutter_blue_plus` (bluez) | Requires bluez system package |
+| GPS | `geolocator` (geoclue) | Uses system location service |
+| Cell | Stub | Not available (no cellular hardware) |
 
 ### Planned Signal Types
 
@@ -159,6 +170,32 @@ Detection algorithms (stingray, rogue AP, BLE tracker) are platform-agnostic and
 
 ---
 
+## Known Issues & Limitations
+
+### Platform-Specific
+
+| Issue | Platform | Status |
+|-------|----------|--------|
+| Wi-Fi scan returns empty | iOS | Expected - no public API for Wi-Fi enumeration |
+| Cell scanning non-functional | iOS/Linux/macOS/Windows | Expected - no cellular hardware APIs available |
+| RF kill (OPSEC) toggle | Linux/macOS/Windows | Stub - no system control APIs |
+| Wi-Fi scan silently fails | Android | May fail if NEARBY_WIFI_DEVICES permission not granted |
+
+### General
+
+- **Signal cache**: Unbounded cache can grow large over long sessions (mitigated with 5000 signal limit)
+- **Aggregate map**: Limited to 200 cells for performance
+- **Timeline export**: Large sessions may take time to generate CSV
+
+### Reporting Bugs
+
+Please open an issue at https://github.com/N0V4P4X/littlebrother/issues using the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md):
+- Device model and Android version
+- Steps to reproduce
+- Relevant log output (adb logcat | grep LB_)
+
+---
+
 ## Setup on Debian (N3XU5)
 
 ### 1. Install build dependencies
@@ -224,6 +261,61 @@ flutter pub get
 flutter devices
 flutter run --release
 ```
+
+---
+
+## Linux Desktop Build
+
+### Prerequisites
+
+```bash
+# Install system dependencies
+sudo apt install -y bluez libbluetooth-dev network-manager geoclue-2.0 libgeoclue-2-0
+
+# Clone and setup
+cd ~/DevOps
+git clone git@github.com:N0V4P4X/littlebrother.git
+cd littlebrother
+
+# Enable Linux desktop support
+flutter config --enable-linux-desktop
+
+# Generate OUI table (first time only)
+python3 scripts/gen_oui.py
+```
+
+### Build and Run
+
+```bash
+flutter pub get
+flutter build linux
+./build/linux/x64/release/bundle/littlebrother
+```
+
+### Linux Feature Support
+
+| Signal | Implementation | Status |
+|--------|---------------|--------|
+| WiFi | `nmcli` (NetworkManager) | ✅ Works |
+| BLE | `flutter_blue_plus` (via bluez) | ✅ Works |
+| GPS | `geolocator` (via geoclue) | ✅ Works |
+| Cell | Stub (no cellular hardware) | N/A |
+
+**Note:** Cell scanning is not available on Linux desktop since there's no cellular modem. The app will run with WiFi, BLE, and GPS scanning only.
+
+### Intel Map Layers
+
+The aggregate map supports multiple visualization layers:
+
+| Layer | Description |
+|-------|-------------|
+| GRID | Geohash-based density grid of all detected signals |
+| TOWERS | Cell tower positions with threat coloring |
+| WIFI | WiFi access point positions |
+| BLE | Bluetooth LE device positions |
+| TEST | Development test data (see below) |
+
+**TEST Layer (Development Only):** This layer displays mock community data for UI testing. All markers are clearly labeled as `[TEST]` and display a warning banner. This layer will be removed before release builds.
 
 ---
 
@@ -296,9 +388,6 @@ scripts/
 
 tool/
 └── lb_cli.dart                        # Gridland CLI/TUI entry point (planned)
-
-tool/
-└── lb_cli.dart                        # Gridland CLI/TUI entry point (planned)
 ```
 
 ---
@@ -362,7 +451,7 @@ Integration will begin once Gridland stabilizes beyond v0.
 - [x] **P5 partial** — Cell scanner diagnostics + permission status UI
 - [x] **P5 partial** — Enhanced Stingray heuristics (H6: TA anomaly, H7: neighbor stability, H4 weight fix)
 - [ ] **P5** — Cell tab UI (full cell signal detail view)
-- [ ] **P6** — Cell map overlay (OpenStreetMap / Google Maps)
+- [x] **P6** — Cell map overlay (OpenStreetMap / flutter_map)
 - [ ] **P6** — OpenCelliD sync (seed baseline from public cell tower DB)
 - [ ] **P6** — PhysicalChannelConfig listener (band + channel width telemetry)
 - [x] **P7 partial** — Cross-platform stubs (wake_lock, opsec_controller, cell_scanner, wifi_scanner) with conditional imports — Android + Linux + stub pattern

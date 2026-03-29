@@ -11,11 +11,25 @@ class BleScanner {
   final _uuid = const Uuid();
   StreamSubscription<List<ScanResult>>? _sub;
   final _controller = StreamController<List<LBSignal>>.broadcast();
+  static const _maxTrackedDevices = 1000;
+  static const _entryMaxAge = Duration(minutes: 10);
 
   // Track last-seen timestamps per MAC for interval estimation
   final _lastSeen = <String, DateTime>{};
   // Track advertising intervals per MAC (rolling average)
   final _advIntervals = <String, List<int>>{};
+
+  void _cleanupStaleEntries() {
+    final now = DateTime.now();
+    _lastSeen.removeWhere((_, ts) => now.difference(ts) > _entryMaxAge);
+    if (_lastSeen.length > _maxTrackedDevices) {
+      final oldest = _lastSeen.keys.take(_lastSeen.length - _maxTrackedDevices);
+      for (final key in oldest) {
+        _lastSeen.remove(key);
+        _advIntervals.remove(key);
+      }
+    }
+  }
 
   Stream<List<LBSignal>> get stream => _controller.stream;
   bool get isRunning => _sub != null;
@@ -40,6 +54,7 @@ class BleScanner {
 
     _sub = FlutterBluePlus.scanResults.listen((results) {
       debugPrint('LB_BLE scanResults batch: ${results.length} devices');
+      _cleanupStaleEntries();
       final now = DateTime.now();
       final signals = results
           .map((r) => _normalize(r, sessionId, now))
@@ -59,6 +74,8 @@ class BleScanner {
     await _sub?.cancel();
     _sub = null;
     await FlutterBluePlus.stopScan();
+    _lastSeen.clear();
+    _advIntervals.clear();
   }
 
   LBSignal? _normalize(ScanResult result, String sessionId, DateTime now) {
@@ -71,10 +88,14 @@ class BleScanner {
     if (_lastSeen.containsKey(mac)) {
       final delta = now.difference(_lastSeen[mac]!).inMilliseconds;
       if (delta > 0 && delta < 10000) {
-        _advIntervals.putIfAbsent(mac, () => []).add(delta);
-        final intervals = _advIntervals[mac]!;
+        final intervals = _advIntervals.putIfAbsent(mac, () => []);
+        intervals.add(delta);
         if (intervals.length > 10) intervals.removeAt(0);
-        intervalMs = intervals.reduce((a, b) => a + b) ~/ intervals.length;
+        if (intervals.length > 1) {
+          intervalMs = intervals.reduce((a, b) => a + b) ~/ intervals.length;
+        } else if (intervals.isNotEmpty) {
+          intervalMs = intervals.first;
+        }
       }
     }
     _lastSeen[mac] = now;

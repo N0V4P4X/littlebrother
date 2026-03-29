@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:littlebrother/core/models/lb_signal.dart';
 import 'package:littlebrother/core/scan_coordinator.dart';
 import 'package:littlebrother/ui/radar/radar_screen.dart';
 import 'package:littlebrother/ui/screens/signal_list_screen.dart';
@@ -134,11 +135,7 @@ class _AppShellState extends State<_AppShell> {
               threatCount:        _coordinator.threatCount,
               currentNetworkType: _coordinator.currentNetworkType,
             ),
-          1 => StreamBuilder(
-                stream: _coordinator.signalStream,
-                builder: (_, __) =>
-                    SignalListScreen(signals: _coordinator.latestSignals),
-              ),
+          1 => SignalListScreen(signals: _coordinator.latestSignals),
           2 => const ThreatLogScreen(),
           3 => OpsecScreen(
               opsec:             _coordinator.opsec,
@@ -162,7 +159,10 @@ class _AppShellState extends State<_AppShell> {
       initialData: _coordinator.isWifiThrottled,
       builder: (context, throttleSnap) {
         final throttled = throttleSnap.data == true;
-        return BottomNavigationBar(
+        return StreamBuilder<LBThreatEvent>(
+          stream: _coordinator.threatStream,
+          builder: (context, threatSnap) {
+            return BottomNavigationBar(
           currentIndex: _navIndex,
           onTap: (i) => setState(() => _navIndex = i),
           items: [
@@ -197,7 +197,7 @@ class _AppShellState extends State<_AppShell> {
                 clipBehavior: Clip.none,
                 children: [
                   const Icon(Icons.warning_amber_outlined, size: 20),
-                  if (_coordinator.threatCount > 0)
+                  if (threatSnap.hasData || _coordinator.threatCount > 0)
                     Positioned(
                       right: -4,
                       top: -4,
@@ -227,6 +227,8 @@ class _AppShellState extends State<_AppShell> {
               label: 'TIMELINE',
             ),
           ],
+        );
+          },
         );
       },
     );

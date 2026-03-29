@@ -37,12 +37,25 @@ class ScanCoordinator {
   bool get isWifiThrottled => _wifi.isThrottled;
 
   String? _sessionId;
+  DateTime? _sessionStartTime;
+  bool _processingSignals = false;
   bool get isScanning => _sessionId != null;
   String? get sessionId => _sessionId;
 
-  // Latest signal cache per identifier (for UI list binding)
+  static const _maxSignalsCache = 5000;
   final _latestSignals = <String, LBSignal>{};
   List<LBSignal> get latestSignals => _latestSignals.values.toList();
+
+  void _pruneSignalsCache() {
+    if (_latestSignals.length > _maxSignalsCache) {
+      final toRemove = _latestSignals.keys
+          .take(_latestSignals.length - _maxSignalsCache)
+          .toList();
+      for (final key in toRemove) {
+        _latestSignals.remove(key);
+      }
+    }
+  }
 
   // Live counters
   int get wifiCount  => _latestSignals.values.where((s) => s.signalType == LBSignalType.wifi).length;
@@ -88,8 +101,12 @@ class ScanCoordinator {
       debugPrint('LB_COORD opsec: not available on ${LBPlatform.name}');
     }
 
-    await _gps.start();
-    debugPrint('LB_COORD gps started');
+    final gpsStarted = await _gps.start();
+    if (gpsStarted) {
+      debugPrint('LB_COORD gps started');
+    } else {
+      debugPrint('LB_COORD gps failed to start - location features disabled');
+    }
 
     _alerts.threatStream.listen((_) {
       _threatCount++;
@@ -100,12 +117,20 @@ class ScanCoordinator {
 
   Future<void> startScan() async {
     if (isScanning) return;
+    
+    _wifiSub?.cancel();
+    _bleSub?.cancel();
+    _cellSub?.cancel();
+    _threatCount = 0;
+    _latestSignals.clear();
+    
     try {
       _sessionId = _uuid.v4();
+      _sessionStartTime = DateTime.now();
       debugPrint('LB_COORD startScan session=$_sessionId');
 
       debugPrint('LB_COORD inserting session to DB');
-      final session = LBSession(id: _sessionId!, startedAt: DateTime.now());
+      final session = LBSession(id: _sessionId!, startedAt: _sessionStartTime!);
       await _db.insertSession(session);
       debugPrint('LB_COORD session inserted');
 
@@ -123,14 +148,6 @@ class ScanCoordinator {
         _onSignals(signals);
       }, onError: (e) => debugPrint('LB_COORD ble stream error: $e'), onDone: () {
         debugPrint('LB_COORD ble stream done');
-      });
-
-      debugPrint('LB_COORD subscribing to cell stream');
-      _cellSub = _cell.stream.listen((signals) {
-        debugPrint('LB_COORD cell batch: ${signals.length} signals');
-        _onSignals(signals);
-      }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'), onDone: () {
-        debugPrint('LB_COORD cell stream done');
       });
 
       debugPrint('LB_COORD starting wifi scanner');
@@ -181,18 +198,23 @@ class ScanCoordinator {
     final stats = await _db.getSessionStats(_sessionId!);
     final session = LBSession(
       id: _sessionId!,
-      startedAt: DateTime.now(),
+      startedAt: _sessionStartTime ?? DateTime.now(),
       endedAt: DateTime.now(),
       observationCount: stats['total'] ?? 0,
       threatCount: _threatCount,
     );
     await _db.updateSession(session);
     _sessionId = null;
+    _sessionStartTime = null;
+    _threatCount = 0;
     debugPrint('LB_COORD scan stopped');
   }
 
   Future<void> _onSignals(List<LBSignal> signals) async {
-    debugPrint('LB_COORD _onSignals called with ${signals.length} signals, sessionId=$_sessionId');
+    if (_processingSignals) {
+      debugPrint('LB_COORD _onSignals: already processing, skipping batch');
+      return;
+    }
     if (_sessionId == null) {
       debugPrint('LB_COORD _onSignals: no session, skipping');
       return;
@@ -201,28 +223,34 @@ class ScanCoordinator {
       debugPrint('LB_COORD _onSignals: empty batch, skipping');
       return;
     }
+    
+    _processingSignals = true;
+    
+    try {
+      debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
 
-    // Stamp GPS onto each signal
-    final geotagged = signals.map((s) {
-      if (_gps.hasFreshFix && _gps.lastPosition != null) {
-        final stamped = s.copyWith(
-          lat: _gps.lastPosition!.latitude,
-          lon: _gps.lastPosition!.longitude,
-        );
-        if (_gps.currentGeohash != null) {
-          stamped.metadata['geohash'] = _gps.currentGeohash!;
+      // Stamp GPS onto each signal
+      final geotagged = signals.map((s) {
+        if (_gps.hasFreshFix && _gps.lastPosition != null) {
+          final stamped = s.copyWith(
+            lat: _gps.lastPosition!.latitude,
+            lon: _gps.lastPosition!.longitude,
+          );
+          if (_gps.currentGeohash != null) {
+            stamped.metadata['geohash'] = _gps.currentGeohash!;
+          }
+          return stamped;
         }
-        return stamped;
-      }
-      return s;
-    }).toList();
+        return s;
+      }).toList();
 
-    // Update latest cache
-    for (final s in geotagged) {
+      // Update latest cache
+      for (final s in geotagged) {
       if (s.identifier != 'DOWNGRADE_EVENT') {
         _latestSignals[s.identifier] = s;
       }
     }
+    _pruneSignalsCache();
 
     // Update network type display
     final cell = geotagged.where((s) =>
@@ -278,6 +306,9 @@ class ScanCoordinator {
     // Broadcast to UI
     if (!_signalCtrl.isClosed) {
       _signalCtrl.add(geotagged);
+    }
+    } finally {
+      _processingSignals = false;
     }
   }
 

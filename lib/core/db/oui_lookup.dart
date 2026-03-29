@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 
 /// Resolves MAC address prefixes to vendor names via embedded OUI table.
@@ -16,8 +17,9 @@ class OuiLookup {
     try {
       final raw = await rootBundle.loadString('assets/oui/oui_table.json');
       _table = Map<String, String>.from(jsonDecode(raw) as Map);
-    } catch (_) {
-      _table = {}; // graceful degradation — no vendor resolution
+    } catch (e) {
+      debugPrint('LB_OUI failed to load OUI table: $e');
+      _table = {};
     } finally {
       _loading = false;
     }

@@ -12,9 +12,9 @@ class GpsTracker {
 
   /// Returns true if the last GPS fix is fresh enough to trust.
   bool get hasFreshFix {
-    if (_lastFixTime == null) return false;
-    return DateTime.now().difference(_lastFixTime!).inMilliseconds <
-        30000; // 30s
+    final lastFix = _lastFixTime;
+    if (lastFix == null) return false;
+    return DateTime.now().difference(lastFix).inMilliseconds < 30000;
   }
 
   String? get currentGeohash {

@@ -17,7 +17,9 @@ class _SignalListScreenState extends State<SignalListScreen>
     with SingleTickerProviderStateMixin {
 
   late TabController _tabs;
-  String _sortBy = 'rssi'; // rssi | risk | name
+  final _sortNotifier = ValueNotifier<String>('rssi');
+  List<LBSignal>? _cachedSignals;
+  String? _cachedSortBy;
 
   final _tabTypes = [
     (label: 'ALL',  type: null),
@@ -35,20 +37,25 @@ class _SignalListScreenState extends State<SignalListScreen>
   @override
   void dispose() {
     _tabs.dispose();
+    _sortNotifier.dispose();
     super.dispose();
   }
 
   List<LBSignal> _filtered(String? type) {
-    var list = type == null
-        ? widget.signals.where((s) => s.identifier != 'DOWNGRADE_EVENT').toList()
-        : widget.signals.where((s) => s.signalType == type).toList();
-
-    switch (_sortBy) {
-      case 'rssi': list.sort((a, b) => b.rssi.compareTo(a.rssi));
-      case 'risk': list.sort((a, b) => b.riskScore.compareTo(a.riskScore));
-      case 'name': list.sort((a, b) => a.displayName.compareTo(b.displayName));
+    final sortBy = _sortNotifier.value;
+    if (_cachedSignals == null || _cachedSortBy != sortBy) {
+      _cachedSortBy = sortBy;
+      var list = widget.signals.where((s) => s.identifier != 'DOWNGRADE_EVENT').toList();
+      switch (sortBy) {
+        case 'rssi': list.sort((a, b) => b.rssi.compareTo(a.rssi));
+        case 'risk': list.sort((a, b) => b.riskScore.compareTo(a.riskScore));
+        case 'name': list.sort((a, b) => a.displayName.compareTo(b.displayName));
+      }
+      _cachedSignals = list;
     }
-    return list;
+    return type == null
+        ? _cachedSignals!
+        : _cachedSignals!.where((s) => s.signalType == type).toList();
   }
 
   @override
@@ -61,7 +68,10 @@ class _SignalListScreenState extends State<SignalListScreen>
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort, size: 18, color: LBColors.blue),
             color: LBColors.surface,
-            onSelected: (v) => setState(() => _sortBy = v),
+            onSelected: (v) {
+              _sortNotifier.value = v;
+              _cachedSignals = null;
+            },
             itemBuilder: (_) => [
               _menuItem('rssi', 'Sort by RSSI'),
               _menuItem('risk', 'Sort by Risk'),

@@ -9,7 +9,7 @@ class LBChannels {
 
 class LBDb {
   static const name            = 'littlebrother.db';
-  static const version         = 1;
+  static const version         = 3;
   static const tObservations   = 'observations';
   static const tKnownDevices   = 'known_devices';
   static const tCellBaseline   = 'cell_baseline';
