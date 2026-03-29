@@ -1,5 +1,6 @@
+import 'dart:async' show Timer;
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -485,7 +486,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       MapLayer.towers => _towers.map((t) => _buildTowerMarker(t)).toList(),
       MapLayer.wifi => _wifiDevices.map((w) => _buildWifiMarker(w)).toList(),
       MapLayer.ble => _bleDevices.map((b) => _buildBleMarker(b)).toList(),
-      MapLayer.test => kDebugMode ? _testThreats.map((t) => _buildTestThreatMarker(t)).toList() : [],
+      MapLayer.test => kDebugMode ? _testThreats.map((t) => _buildTestThreatMarker(t)).toList() : <Marker>[],
       MapLayer.grid => <Marker>[],
     };
     
