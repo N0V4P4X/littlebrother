@@ -10,17 +10,20 @@ import 'package:littlebrother/core/db/oui_lookup.dart';
 class WifiScanner {
   final _uuid = const Uuid();
 
-  // Subscription to the platform scan-results-available broadcast.
   StreamSubscription<List<WiFiAccessPoint>>? _platformSub;
-
-  // Periodic timer that nudges startScan when the OS allows it.
-  // We keep trying even when throttled so we pick up the next allowed window.
   Timer? _nudgeTimer;
+  DateTime? _lastResultTime;
 
   final _controller = StreamController<List<LBSignal>>.broadcast();
+  final _throttleCtrl = StreamController<bool>.broadcast();
 
   Stream<List<LBSignal>> get stream => _controller.stream;
+  Stream<bool> get throttledStream => _throttleCtrl.stream;
   bool get isRunning => _platformSub != null;
+  bool get isThrottled => _isThrottled;
+
+  bool _isThrottled = false;
+  bool _canScan = true;
 
   /// Start Wi-Fi scanning for [sessionId].
   ///
@@ -46,6 +49,8 @@ class WifiScanner {
         debugPrint('LB_WIFI onScannedResultsAvailable: ${aps.length} APs');
         _onResults(aps, sessionId);
       },
+      onError: (e) => debugPrint('LB_WIFI platform sub error: $e'),
+      onDone: () => debugPrint('LB_WIFI platform sub done'),
     );
     debugPrint('LB_WIFI subscribed to onScannedResultsAvailable');
 
@@ -62,7 +67,15 @@ class WifiScanner {
     _nudgeTimer = Timer.periodic(Duration(milliseconds: interval), (_) async {
       final can = await WiFiScan.instance.canStartScan();
       debugPrint('LB_WIFI nudge canStartScan=$can');
-      if (can == CanStartScan.yes) {
+      _canScan = can == CanStartScan.yes;
+      
+      final nowThrottled = !_canScan && _lastResultTime != null;
+      if (nowThrottled != _isThrottled) {
+        _isThrottled = nowThrottled;
+        _throttleCtrl.add(_isThrottled);
+      }
+      
+      if (_canScan) {
         await WiFiScan.instance.startScan();
         debugPrint('LB_WIFI startScan called');
       }
@@ -80,15 +93,33 @@ class WifiScanner {
   Future<void> stop() async {
     _nudgeTimer?.cancel();
     _nudgeTimer = null;
+    _isThrottled = false;
+    _lastResultTime = null;
+    _canScan = true;
     await _platformSub?.cancel();
     _platformSub = null;
   }
 
   void _onResults(List<WiFiAccessPoint> aps, String sessionId) {
-    if (aps.isEmpty || _controller.isClosed) return;
+    debugPrint('LB_WIFI _onResults called with ${aps.length} APs');
+    if (_controller.isClosed) {
+      debugPrint('LB_WIFI controller is closed, skipping');
+      return;
+    }
+    _lastResultTime = DateTime.now();
+    if (aps.isEmpty) {
+      debugPrint('LB_WIFI results empty, not emitting');
+      return;
+    }
     final now = DateTime.now();
     final signals = aps.map((ap) => _normalize(ap, sessionId, now)).toList();
+    debugPrint('LB_WIFI emitting ${signals.length} signals to stream');
     _controller.add(signals);
+    
+    if (_isThrottled) {
+      _isThrottled = false;
+      _throttleCtrl.add(false);
+    }
   }
 
   LBSignal _normalize(WiFiAccessPoint ap, String sessionId, DateTime now) {
@@ -116,7 +147,7 @@ class WifiScanner {
         'security':          security,
         'capabilities':      ap.capabilities,
         'vendor':            vendor,
-        'channel_width_mhz': ap.channelWidth ?? -1,
+        'channel_width_mhz': ap.channelWidth?.index ?? -1,
         'ssid':              ap.ssid,
         'is_hidden':         ap.ssid.isEmpty,
         'is_randomized':     OuiLookup.instance.isRandomized(ap.bssid),
@@ -173,5 +204,6 @@ class WifiScanner {
   void dispose() {
     stop();
     _controller.close();
+    _throttleCtrl.close();
   }
 }

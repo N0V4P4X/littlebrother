@@ -48,7 +48,7 @@ class CellScanner {
       final signals = <LBSignal>[];
 
       for (final raw in rawCells) {
-        final cell = Map<String, dynamic>.from(raw as Map);
+        final cell = Map<String, dynamic>.from(raw as Map<Object?, Object?>);
         final signal = _normalize(cell, sessionId, now, serviceState);
         if (signal != null) signals.add(signal);
       }
@@ -67,6 +67,7 @@ class CellScanner {
         _servingCellHistory.removeWhere((e) => e.ts.isBefore(cutoff));
       }
 
+      debugPrint('LB_CELL emitting ${signals.length} signals to stream');
       if (!_controller.isClosed) {
         _controller.add(signals);
       }

@@ -46,10 +46,13 @@ class BleScanner {
           .map((r) => _normalize(r, sessionId, now))
           .whereType<LBSignal>()
           .toList();
+      debugPrint('LB_BLE emitting ${signals.length} signals to stream');
       if (!_controller.isClosed) {
         _controller.add(signals);
       }
-    }, onError: (e) => debugPrint('LB_BLE scanResults error: $e'));
+    }, onError: (e) => debugPrint('LB_BLE scanResults error: $e'), onDone: () {
+      debugPrint('LB_BLE scanResults stream done');
+    });
     debugPrint('LB_BLE subscribed to scanResults');
   }
 
@@ -62,7 +65,7 @@ class BleScanner {
   LBSignal? _normalize(ScanResult result, String sessionId, DateTime now) {
     final mac = result.device.remoteId.str;
     final rssi = result.rssi;
-    if (rssi == 0) return null; // invalid reading
+    if (rssi > 20 || rssi < -127) return null;
 
     // Advertising interval estimation
     int? intervalMs;

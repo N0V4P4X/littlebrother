@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart' show Color;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
@@ -23,7 +24,7 @@ class AlertEngine {
   AlertEngine(this._db);
 
   Future<void> init() async {
-    const android = AndroidInitializationSettings('@drawable/ic_notification');
+    const android = AndroidInitializationSettings('ic_notification');
     const ios     = DarwinInitializationSettings();
     await _notifs.initialize(
       const InitializationSettings(android: android, iOS: ios),
@@ -91,7 +92,6 @@ class AlertEngine {
       ledColor: ledColor,
       ledOnMs: 500,
       ledOffMs: 500,
-      icon: '@drawable/ic_notification',
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -99,12 +99,16 @@ class AlertEngine {
       presentSound: true,
     );
 
-    await _notifs.show(
-      event.hashCode.abs() % 10000,
-      _notifTitle(event),
-      _notifBody(event),
-      NotificationDetails(android: androidDetails, iOS: iosDetails),
-    );
+    try {
+      await _notifs.show(
+        event.hashCode.abs() % 10000,
+        _notifTitle(event),
+        _notifBody(event),
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+      );
+    } catch (e) {
+      debugPrint('LB_ALERT notification failed (non-fatal): $e');
+    }
   }
 
   String _notifTitle(LBThreatEvent event) {

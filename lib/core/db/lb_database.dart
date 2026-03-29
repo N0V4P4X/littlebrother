@@ -27,11 +27,6 @@ class LBDatabase {
       version: LBDb.version,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      onConfigure: (db) async {
-        await db.execute('PRAGMA journal_mode = WAL');
-        await db.execute('PRAGMA synchronous = NORMAL');
-        await db.execute('PRAGMA foreign_keys = ON');
-      },
     );
   }
 
@@ -126,6 +121,12 @@ class LBDatabase {
     await db.execute('''
       CREATE INDEX idx_threats_dismissed ON ${LBDb.tThreatEvents}(dismissed, severity);
     ''');
+
+    try {
+      await db.execute('PRAGMA foreign_keys = ON');
+    } catch (_) {
+      // PRAGMA may not be supported on all SQLite builds
+    }
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {

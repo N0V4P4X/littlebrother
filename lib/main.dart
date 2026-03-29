@@ -5,6 +5,7 @@ import 'package:littlebrother/ui/radar/radar_screen.dart';
 import 'package:littlebrother/ui/screens/signal_list_screen.dart';
 import 'package:littlebrother/ui/screens/threat_log_screen.dart';
 import 'package:littlebrother/ui/screens/opsec_screen.dart';
+import 'package:littlebrother/ui/screens/timeline_screen.dart';
 import 'package:littlebrother/ui/screens/permission_gate.dart';
 import 'package:littlebrother/ui/theme/lb_theme.dart';
 
@@ -146,6 +147,7 @@ class _AppShellState extends State<_AppShell> {
                 _coordinator.setOpsecAutoEnabled(v);
               },
             ),
+          4 => const TimelineScreen(),
           _ => const SizedBox.shrink(),
         };
       },
@@ -153,45 +155,74 @@ class _AppShellState extends State<_AppShell> {
   }
 
   Widget _buildNav() {
-    return BottomNavigationBar(
-      currentIndex: _navIndex,
-      onTap: (i) => setState(() => _navIndex = i),
-      items: [
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.radar, size: 20),
-          label: 'RADAR',
-        ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.list, size: 20),
-          label: 'SIGNALS',
-        ),
-        BottomNavigationBarItem(
-          icon: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              const Icon(Icons.warning_amber_outlined, size: 20),
-              if (_coordinator.threatCount > 0)
-                Positioned(
-                  right: -4,
-                  top: -4,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: LBColors.red,
-                      shape: BoxShape.circle,
+    return StreamBuilder<bool>(
+      stream: _coordinator.wifiThrottleStream,
+      initialData: _coordinator.isWifiThrottled,
+      builder: (context, throttleSnap) {
+        final throttled = throttleSnap.data == true;
+        return BottomNavigationBar(
+          currentIndex: _navIndex,
+          onTap: (i) => setState(() => _navIndex = i),
+          items: [
+            BottomNavigationBarItem(
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.radar, size: 20),
+                  if (throttled)
+                    Positioned(
+                      right: -4,
+                      top: -4,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: LBColors.yellow,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-            ],
-          ),
-          label: 'THREATS',
-        ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.security, size: 20),
-          label: 'OPSEC',
-        ),
-      ],
+                ],
+              ),
+              label: 'RADAR',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.list, size: 20),
+              label: 'SIGNALS',
+            ),
+            BottomNavigationBarItem(
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.warning_amber_outlined, size: 20),
+                  if (_coordinator.threatCount > 0)
+                    Positioned(
+                      right: -4,
+                      top: -4,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: LBColors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              label: 'THREATS',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.security, size: 20),
+              label: 'OPSEC',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.timeline, size: 20),
+              label: 'TIMELINE',
+            ),
+          ],
+        );
+      },
     );
   }
 }

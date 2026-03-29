@@ -32,6 +32,8 @@ class ScanCoordinator {
   final _signalCtrl = StreamController<List<LBSignal>>.broadcast();
   Stream<List<LBSignal>> get signalStream => _signalCtrl.stream;
   Stream<LBThreatEvent>  get threatStream => _alerts.threatStream;
+  Stream<bool>           get wifiThrottleStream => _wifi.throttledStream;
+  bool get isWifiThrottled => _wifi.isThrottled;
 
   String? _sessionId;
   bool get isScanning => _sessionId != null;
@@ -68,8 +70,12 @@ class ScanCoordinator {
     _gps     = GpsTracker();
     _analyzer = LBAnalyzer(_db);
 
-    await _alerts.init();
-    debugPrint('LB_COORD alerts init done');
+    try {
+      await _alerts.init();
+      debugPrint('LB_COORD alerts init done');
+    } catch (e) {
+      debugPrint('LB_COORD alerts init failed (non-fatal): $e');
+    }
     await _opsec.init();
     debugPrint('LB_COORD opsec init done');
     await _gps.start();
@@ -88,41 +94,56 @@ class ScanCoordinator {
 
   Future<void> startScan() async {
     if (isScanning) return;
-    _sessionId = _uuid.v4();
-    debugPrint('LB_COORD startScan session=$_sessionId');
+    try {
+      _sessionId = _uuid.v4();
+      debugPrint('LB_COORD startScan session=$_sessionId');
 
-    final session = LBSession(id: _sessionId!, startedAt: DateTime.now());
-    await _db.insertSession(session);
+      debugPrint('LB_COORD inserting session to DB');
+      final session = LBSession(id: _sessionId!, startedAt: DateTime.now());
+      await _db.insertSession(session);
+      debugPrint('LB_COORD session inserted');
 
-    _wifiSub = _wifi.stream.listen((signals) {
-      debugPrint('LB_COORD wifi batch: ${signals.length} signals');
-      _onSignals(signals);
-    }, onError: (e) => debugPrint('LB_COORD wifi stream error: $e'));
+      debugPrint('LB_COORD subscribing to wifi stream');
+      _wifiSub = _wifi.stream.listen((signals) {
+        debugPrint('LB_COORD wifi batch: ${signals.length} signals');
+        _onSignals(signals);
+      }, onError: (e) => debugPrint('LB_COORD wifi stream error: $e'), onDone: () {
+        debugPrint('LB_COORD wifi stream done');
+      });
 
-    _bleSub = _ble.stream.listen((signals) {
-      debugPrint('LB_COORD ble batch: ${signals.length} signals');
-      _onSignals(signals);
-    }, onError: (e) => debugPrint('LB_COORD ble stream error: $e'));
+      debugPrint('LB_COORD subscribing to ble stream');
+      _bleSub = _ble.stream.listen((signals) {
+        debugPrint('LB_COORD ble batch: ${signals.length} signals');
+        _onSignals(signals);
+      }, onError: (e) => debugPrint('LB_COORD ble stream error: $e'), onDone: () {
+        debugPrint('LB_COORD ble stream done');
+      });
 
-    _cellSub = _cell.stream.listen((signals) {
-      debugPrint('LB_COORD cell batch: ${signals.length} signals');
-      _onSignals(signals);
-    }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'));
+      debugPrint('LB_COORD subscribing to cell stream');
+      _cellSub = _cell.stream.listen((signals) {
+        debugPrint('LB_COORD cell batch: ${signals.length} signals');
+        _onSignals(signals);
+      }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'), onDone: () {
+        debugPrint('LB_COORD cell stream done');
+      });
 
-    debugPrint('LB_COORD starting wifi scanner');
-    await _wifi.start(_sessionId!);
-    debugPrint('LB_COORD wifi scanner started, isRunning=${_wifi.isRunning}');
+      debugPrint('LB_COORD starting wifi scanner');
+      await _wifi.start(_sessionId!);
+      debugPrint('LB_COORD wifi scanner started, isRunning=${_wifi.isRunning}');
 
-    debugPrint('LB_COORD starting ble scanner');
-    await _ble.start(_sessionId!);
-    debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
+      debugPrint('LB_COORD starting ble scanner');
+      await _ble.start(_sessionId!);
+      debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
 
-    debugPrint('LB_COORD starting cell scanner');
-    await _cell.start(_sessionId!);
-    debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
+      debugPrint('LB_COORD starting cell scanner');
+      await _cell.start(_sessionId!);
+      debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
 
-    await LBWakeLock.acquire();
-    debugPrint('LB_COORD wake lock acquired');
+      await LBWakeLock.acquire();
+      debugPrint('LB_COORD wake lock acquired');
+    } catch (e, st) {
+      debugPrint('LB_COORD startScan ERROR: $e\n$st');
+    }
   }
 
   Future<void> stopScan() async {
@@ -149,7 +170,15 @@ class ScanCoordinator {
   }
 
   Future<void> _onSignals(List<LBSignal> signals) async {
-    if (_sessionId == null || signals.isEmpty) return;
+    debugPrint('LB_COORD _onSignals called with ${signals.length} signals, sessionId=$_sessionId');
+    if (_sessionId == null) {
+      debugPrint('LB_COORD _onSignals: no session, skipping');
+      return;
+    }
+    if (signals.isEmpty) {
+      debugPrint('LB_COORD _onSignals: empty batch, skipping');
+      return;
+    }
 
     // Stamp GPS onto each signal
     final geotagged = signals.map((s) {
@@ -176,6 +205,8 @@ class ScanCoordinator {
     if (cell != null) {
       final nt = cell.metadata['network_type_name'] as String?;
       if (nt != null) _currentNetworkType = nt;
+    } else {
+      _currentNetworkType = '---';
     }
 
     // Persist batch

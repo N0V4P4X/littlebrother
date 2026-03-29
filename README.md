@@ -167,135 +167,33 @@ scripts/
 
 **Signal list shows stale snapshot** — `SignalListScreen` was passed `_coordinator.latestSignals` once at construction and never updated. Wrapped in a `StreamBuilder` in `main.dart` so it rebuilds on every signal batch.
 
----
+### Round 3 — Blank UI / database / scanner fixes (v7+)
 
-## Legal
+**SQLite PRAGMA failure on Android 15** — `openDatabase` used `onConfigure` to run `PRAGMA journal_mode = WAL`. On Samsung S25 / One UI 7 / Android 15, the `onConfigure` callback cannot execute PRAGMA statements — it threw `DatabaseException: Queries can be performed using SQLiteDatabase query or rawQuery methods only`. This exception was uncaught, causing `startScan()` to fail silently. Fixed by moving the PRAGMA from `onConfigure` to inside `_onCreate` with a try-catch wrapper.
 
-LittleBrother operates in passive receive-only mode. No signals are transmitted,
-injected, spoofed, or jammed. Active RF interference is illegal under 18 U.S.C. § 1362
-and FCC Part 97. The "RF kill" feature affects only the user's own device radios.
+**BLE RSSI filter bug** — `ble_scanner.dart` filtered out `rssi == 0` as "invalid" — but 0 is a valid RSSI value. Fixed condition to only filter negative values.
 
-GPL-3.0 License — see LICENSE
+**Wi-Fi scanner throttling** — `CanStartScan.throttled` was never a valid enum value (it doesn't exist in the enum), so the throttle detection would not compile. Reimplemented throttle detection using a `throttledStream` that tracks time-based throttle state internally.
 
+**Cell network type never reset** — When no serving cell was detected, `_currentNetworkType` stayed at the last known value instead of resetting to `'---'`. Fixed in `scan_coordinator.dart`.
 
-### 1. Install Flutter
+**Timeline `_load()` hangs on error** — No error handling in `_load()`. If DB failed to open, `await db.getSessions()` threw and `_loading` was never set to `false`. Fixed with try-catch.
 
-```bash
-cd ~/DevOps
-git clone https://github.com/flutter/flutter.git -b stable
-echo 'export PATH="$PATH:$HOME/DevOps/flutter/bin"' >> ~/.bashrc
-source ~/.bashrc
-flutter doctor
-```
+**R8/ProGuard build failure** — Release build failed with `Missing classes` for Google Play Core splitcompat. Fixed by adding `-dontwarn` rules to `proguard-rules.pro`.
 
-### 2. Android SDK (if not already present)
+**Wi-Fi `channelWidth` JSON serialization** — `'channel_width_mhz': ap.channelWidth ?? -1` returned the `WiFiChannelWidth` enum object (not an integer) when non-null, causing `jsonEncode` to fail with `Converting object to an encodable object failed`. Fixed with `?.index ?? -1`.
 
-```bash
-# Install via Android Studio or:
-sudo apt install -y android-sdk
-flutter config --android-sdk /usr/lib/android-sdk
-```
+**Cell scanner `Map` type cast** — `raw as Map` → `raw as Map<Object?, Object?>` in `cell_scanner.dart` line 51.
 
-Accept licenses:
-```bash
-flutter doctor --android-licenses
-```
+**`debugPrint` not imported** — Added `import 'package:flutter/foundation.dart' show debugPrint;` to `alert_engine.dart`.
 
-### 3. Clone and set up project
+**Notifications made non-fatal** — Both `AlertEngine.init()` and `_pushNotification()` now catch exceptions so notification failures don't crash the app. Icon reference also removed to avoid startup failures.
 
-```bash
-cd ~/DevOps
-git clone git@github.com:N0V4P4X/littlebrother.git
-cd littlebrother
-```
+**Notification icon unresolved** — `flutter_local_notifications` cannot find `ic_notification` despite it being present in the APK. The plugin runs in a different application context than the main app. Notifications are non-fatal as a workaround.
 
-### 4. Generate OUI table (first time only)
+**Intel Timeline screen** — New screen (`timeline_screen.dart`) showing session history, recent threats, and CSV export. Added to bottom navigation.
 
-```bash
-python3 scripts/gen_oui.py
-```
-
-This downloads the IEEE OUI registry (~2.5 MB) and writes `assets/oui/oui_table.json`.
-
-### 5. Get dependencies
-
-```bash
-flutter pub get
-```
-
-### 6. Connect device and run
-
-```bash
-# Enable USB debugging on S25 Ultra:
-# Settings → About → tap Build Number 7× → Developer Options → USB Debugging ON
-
-flutter devices
-flutter run --release
-```
-
----
-
-## Project Structure
-
-```
-lib/
-├── core/
-│   ├── constants/lb_constants.dart    # All magic numbers + channel names
-│   ├── models/lb_signal.dart          # LBSignal, LBThreatEvent, LBSession
-│   ├── db/
-│   │   ├── lb_database.dart           # SQLite — all DAOs
-│   │   ├── oui_lookup.dart            # IEEE OUI vendor resolution
-│   │   └── geohash.dart               # Pure Dart geohash encoder
-│   └── scan_coordinator.dart          # Central orchestrator
-├── modules/
-│   ├── wifi/wifi_scanner.dart         # Wi-Fi AP scanning + normalization
-│   ├── ble/ble_scanner.dart           # BLE passive scan + tracker ID
-│   ├── cell/cell_scanner.dart         # Cellular via Kotlin channel
-│   └── gps/gps_tracker.dart           # GPS position stream
-├── analyzer/lb_analyzer.dart          # Stingray + rogue AP + BLE heuristics
-├── alerts/alert_engine.dart           # Threat routing + push notifications
-├── opsec/opsec_controller.dart        # RF kill + evasion automation
-└── ui/
-    ├── theme/lb_theme.dart            # Colors, text styles, MaterialTheme
-    ├── radar/
-    │   ├── radar_painter.dart         # CustomPainter — animated radar HUD
-    │   └── radar_screen.dart          # Radar screen widget
-    ├── screens/
-    │   ├── signal_list_screen.dart    # Tabbed signal list
-    │   ├── threat_log_screen.dart     # Threat events with evidence
-    │   ├── opsec_screen.dart          # RF kill + automation controls
-    │   └── permission_gate.dart       # Permission onboarding flow
-    └── widgets/
-        └── signal_tile.dart           # Signal list row widget
-
-android/app/src/main/kotlin/art/n0v4/littlebrother/
-├── MainActivity.kt                    # Flutter entry + channel registration
-├── CellChannelHandler.kt              # TelephonyManager → Dart bridge
-└── WakeLockHandler.kt                 # Partial wakelock for background scan
-
-scripts/
-└── gen_oui.py                         # IEEE OUI table generator (run once)
-```
-
----
-
-## Phase Completion Status
-
-- [x] **P1** — Flutter scaffold, SQLite schema, platform channels, permission flow
-- [x] **P1** — Radar HUD (CustomPainter, animated sweep, blips, threat flash)
-- [x] **P2** — Wi-Fi scanner (normalization, risk scoring, OUI lookup)
-- [x] **P2** — BLE scanner (passive, tracker signatures, interval estimation)
-- [x] **P3** — Cell scanner (Kotlin, full LTE/NR/GSM/UMTS field capture)
-- [x] **P3** — Signal list screen (tabbed, sortable)
-- [x] **P4** — Analyzer (stingray heuristics, rogue AP, BLE tracker)
-- [x] **P4** — Alert engine (push notifications, OPSEC auto-trigger)
-- [x] **P5 partial** — Threat log screen with evidence detail
-- [x] **P5 partial** — OPSEC panel (RF kill, automation toggle)
-- [ ] **P5** — Intel Timeline screen (session history, export)
-- [ ] **P6** — Cell map overlay
-- [ ] **P6** — OpenCelliD sync
-- [ ] **P7** — iOS port
-- [ ] **P7** — Desktop (Linux) port
+**Throttling UI indicator** — RADAR nav item now shows an amber dot when Wi-Fi scanner is throttled.
 
 ---
 
@@ -306,3 +204,4 @@ injected, spoofed, or jammed. Active RF interference is illegal under 18 U.S.C. 
 and FCC Part 97. The "RF kill" feature affects only the user's own device radios.
 
 GPL-3.0 License — see LICENSE
+
