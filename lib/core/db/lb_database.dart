@@ -712,14 +712,13 @@ class LBDatabase {
         o.signal_type,
         k.vendor,
         COUNT(*) AS obs_count,
-        COUNT(DISTINCT SUBSTR(om.geohash, 1, $precision)) AS cell_count,
+        COUNT(DISTINCT SUBSTR(o.geohash, 1, $precision)) AS cell_count,
         MAX(o.threat_flag) AS worst_flag,
         MIN(o.ts) AS first_seen,
         MAX(o.ts) AS last_seen
       FROM ${LBDb.tObservations} o
       LEFT JOIN ${LBDb.tKnownDevices} k ON k.identifier = o.identifier
-      LEFT JOIN ${LBDb.tObservations} om ON om.identifier = o.identifier
-      WHERE SUBSTR(o.geohash, 1, $precision) = ?
+      WHERE o.geohash IS NOT NULL AND SUBSTR(o.geohash, 1, $precision) = ?
       GROUP BY o.identifier
       ORDER BY obs_count DESC
     ''', [geohash]);

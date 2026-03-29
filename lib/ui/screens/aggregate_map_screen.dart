@@ -653,8 +653,9 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   }
 
   Widget _buildLegend() {
-    final double bottomOffset = (_layer == MapLayer.grid && _selectedGridCell != null) ||
-        (kDebugMode && _layer == MapLayer.test && _selectedTestThreat != null) ? 320.0 : 16.0;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final double bottomOffset = ((_layer == MapLayer.grid && _selectedGridCell != null) ||
+        (kDebugMode && _layer == MapLayer.test && _selectedTestThreat != null)) ? 320.0 + bottomPadding : 16.0 + bottomPadding;
     return Positioned(
       bottom: bottomOffset,
       left: 12,
@@ -1007,15 +1008,17 @@ class _CellDetailSheetState extends State<_CellDetailSheet> {
                         ],
                       ),
                     ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _countBadge(LBColors.blue, '${widget.cell.wifiCount}', 'WiFi'),
-                        const SizedBox(width: 4),
-                        _countBadge(LBColors.cyan, '${widget.cell.bleCount}', 'BLE'),
-                        const SizedBox(width: 4),
-                        _countBadge(LBColors.orange, '${widget.cell.cellCount}', 'Cell'),
-                      ],
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _countBadge(LBColors.blue, '${widget.cell.wifiCount}', 'WiFi'),
+                          const SizedBox(width: 4),
+                          _countBadge(LBColors.cyan, '${widget.cell.bleCount}', 'BLE'),
+                          const SizedBox(width: 4),
+                          _countBadge(LBColors.orange, '${widget.cell.cellCount}', 'Cell'),
+                        ],
+                      ),
                     ),
                     const SizedBox(width: 8),
                     const Icon(Icons.close, size: 16, color: LBColors.dimText),
@@ -1250,19 +1253,21 @@ class _TowerDetailSheet extends StatelessWidget {
                       ),
                     ),
                     if (tower.worstThreatFlag > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: threatColor.withValues(alpha: 0.2),
-                          border: Border.all(color: threatColor),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          tower.threatLabel,
-                          style: LBTextStyles.label.copyWith(
-                            color: threatColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: threatColor.withValues(alpha: 0.2),
+                            border: Border.all(color: threatColor),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            tower.threatLabel,
+                            style: LBTextStyles.label.copyWith(
+                              color: threatColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -1450,19 +1455,21 @@ class _WifiDetailSheet extends StatelessWidget {
                       ),
                     ),
                     if (device.worstThreatFlag > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: threatColor.withValues(alpha: 0.2),
-                          border: Border.all(color: threatColor),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          device.threatLabel,
-                          style: LBTextStyles.label.copyWith(
-                            color: threatColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: threatColor.withValues(alpha: 0.2),
+                            border: Border.all(color: threatColor),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            device.threatLabel,
+                            style: LBTextStyles.label.copyWith(
+                              color: threatColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -1623,36 +1630,40 @@ class _BleDetailSheet extends StatelessWidget {
                       ),
                     ),
                     if (device.worstThreatFlag > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: threatColor.withValues(alpha: 0.2),
-                          border: Border.all(color: threatColor),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          device.threatLabel,
-                          style: LBTextStyles.label.copyWith(
-                            color: threatColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: threatColor.withValues(alpha: 0.2),
+                            border: Border.all(color: threatColor),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            device.threatLabel,
+                            style: LBTextStyles.label.copyWith(
+                              color: threatColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
                     if (device.isTracker)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: LBColors.red.withValues(alpha: 0.2),
-                          border: Border.all(color: LBColors.red),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: const Text(
-                          'TRACKER',
-                          style: TextStyle(
-                            color: LBColors.red,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: LBColors.red.withValues(alpha: 0.2),
+                            border: Border.all(color: LBColors.red),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: const Text(
+                            'TRACKER',
+                            style: TextStyle(
+                              color: LBColors.red,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -1808,19 +1819,21 @@ class _TestThreatDetailSheet extends StatelessWidget {
                         ],
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: threatColor.withValues(alpha: 0.2),
-                        border: Border.all(color: threatColor),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text(
-                        threat.threatType.toUpperCase(),
-                        style: LBTextStyles.label.copyWith(
-                          color: threatColor,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: threatColor.withValues(alpha: 0.2),
+                          border: Border.all(color: threatColor),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          threat.threatType.toUpperCase(),
+                          style: LBTextStyles.label.copyWith(
+                            color: threatColor,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
