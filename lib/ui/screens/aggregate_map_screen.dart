@@ -57,6 +57,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   }
 
   Future<void> _load() async {
+    if (_loadRunning) return;
     if (_layer == MapLayer.test && !kDebugMode) {
       setState(() => _layer = MapLayer.grid);
       return;
