@@ -718,7 +718,7 @@ class LBDatabase {
         MAX(o.ts) AS last_seen
       FROM ${LBDb.tObservations} o
       LEFT JOIN ${LBDb.tKnownDevices} k ON k.identifier = o.identifier
-      WHERE o.geohash IS NOT NULL AND SUBSTR(o.geohash, 1, $precision) = ?
+      WHERE o.geohash IS NOT NULL AND SUBSTR(o.geohash, 1, $precision) = SUBSTR(?, 1, $precision)
       GROUP BY o.identifier
       ORDER BY obs_count DESC
     ''', [geohash]);
