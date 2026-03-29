@@ -24,7 +24,7 @@ class _PermissionGateState extends State<PermissionGate>
     _PermDef('Background Location', Permission.locationAlways,    optional: false, nativeMethod: 'requestBackgroundLocation'),
     _PermDef('BLE Scan',            Permission.bluetoothScan,     optional: false),
     _PermDef('Phone State',         Permission.phone,             optional: false),
-    _PermDef('Nearby Wi-Fi',        Permission.nearbyWifiDevices, optional: true,  nativeMethod: 'requestNearbyWifi'),
+    _PermDef('Nearby Wi-Fi',        Permission.nearbyWifiDevices, optional: false,  nativeMethod: 'requestNearbyWifi'),
   ];
 
   @override
@@ -95,7 +95,7 @@ class _PermissionGateState extends State<PermissionGate>
   }
 
   Future<void> _requestAll() async {
-    // Phase 1 — standard permissions via permission_handler
+    // Phase 1 — standard permissions via permission_handler (batch safe)
     await [
       Permission.locationWhenInUse,
       Permission.bluetoothScan,
@@ -103,16 +103,18 @@ class _PermissionGateState extends State<PermissionGate>
     ].request();
     await _checkAll();
 
-    // Phase 2 — background location via native channel
+    // Phase 2 — background location via native channel (must follow fg location)
     if (_perms['Location']?.granted == true) {
       try {
         await _nativePerms.invokeMethod('requestBackgroundLocation');
       } on PlatformException catch (e) {
         debugPrint('LB_PERM bg location native error: $e');
       }
+      // Re-check before proceeding so pendingResult is cleared
+      await _checkAll();
     }
 
-    // Phase 3 — nearby wifi via native channel
+    // Phase 3 — nearby wifi via native channel (sequential — one pending at a time)
     try {
       await _nativePerms.invokeMethod('requestNearbyWifi');
     } on PlatformException catch (e) {

@@ -177,6 +177,25 @@
       ]
     },
     {
+      "name": "flutter_local_notifications",
+      "version": "18.0.1",
+      "dependencies": [
+        "clock",
+        "flutter",
+        "flutter_local_notifications_linux",
+        "flutter_local_notifications_platform_interface",
+        "timezone"
+      ]
+    },
+    {
+      "name": "fl_chart",
+      "version": "0.69.2",
+      "dependencies": [
+        "equatable",
+        "flutter"
+      ]
+    },
+    {
       "name": "path",
       "version": "1.9.1",
       "dependencies": []
@@ -732,6 +751,42 @@
       ]
     },
     {
+      "name": "timezone",
+      "version": "0.10.1",
+      "dependencies": [
+        "http",
+        "path"
+      ]
+    },
+    {
+      "name": "flutter_local_notifications_platform_interface",
+      "version": "8.0.0",
+      "dependencies": [
+        "flutter",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "flutter_local_notifications_linux",
+      "version": "5.0.0",
+      "dependencies": [
+        "dbus",
+        "ffi",
+        "flutter",
+        "flutter_local_notifications_platform_interface",
+        "path",
+        "xdg_directories"
+      ]
+    },
+    {
+      "name": "equatable",
+      "version": "2.0.8",
+      "dependencies": [
+        "collection",
+        "meta"
+      ]
+    },
+    {
       "name": "path_provider_windows",
       "version": "2.3.0",
       "dependencies": [
@@ -1048,9 +1103,14 @@
       ]
     },
     {
-      "name": "platform",
-      "version": "3.1.6",
-      "dependencies": []
+      "name": "http",
+      "version": "1.6.0",
+      "dependencies": [
+        "async",
+        "http_parser",
+        "meta",
+        "web"
+      ]
     },
     {
       "name": "xdg_directories",
@@ -1059,6 +1119,21 @@
         "meta",
         "path"
       ]
+    },
+    {
+      "name": "dbus",
+      "version": "0.7.12",
+      "dependencies": [
+        "args",
+        "ffi",
+        "meta",
+        "xml"
+      ]
+    },
+    {
+      "name": "platform",
+      "version": "3.1.6",
+      "dependencies": []
     },
     {
       "name": "objective_c",
@@ -1111,16 +1186,6 @@
       ]
     },
     {
-      "name": "dbus",
-      "version": "0.7.12",
-      "dependencies": [
-        "args",
-        "ffi",
-        "meta",
-        "xml"
-      ]
-    },
-    {
       "name": "rxdart",
       "version": "0.28.0",
       "dependencies": []
@@ -1136,6 +1201,15 @@
       "name": "vm_service",
       "version": "15.0.2",
       "dependencies": []
+    },
+    {
+      "name": "xml",
+      "version": "6.6.1",
+      "dependencies": [
+        "collection",
+        "meta",
+        "petitparser"
+      ]
     },
     {
       "name": "native_toolchain_c",
@@ -1179,85 +1253,11 @@
       ]
     },
     {
-      "name": "http",
-      "version": "1.6.0",
-      "dependencies": [
-        "async",
-        "http_parser",
-        "meta",
-        "web"
-      ]
-    },
-    {
-      "name": "xml",
-      "version": "6.6.1",
-      "dependencies": [
-        "collection",
-        "meta",
-        "petitparser"
-      ]
-    },
-    {
       "name": "petitparser",
       "version": "7.0.2",
       "dependencies": [
         "collection",
         "meta"
-      ]
-    },
-    {
-      "name": "flutter_local_notifications",
-      "version": "18.0.1",
-      "dependencies": [
-        "clock",
-        "flutter",
-        "flutter_local_notifications_linux",
-        "flutter_local_notifications_platform_interface",
-        "timezone"
-      ]
-    },
-    {
-      "name": "flutter_local_notifications_platform_interface",
-      "version": "8.0.0",
-      "dependencies": [
-        "flutter",
-        "plugin_platform_interface"
-      ]
-    },
-    {
-      "name": "flutter_local_notifications_linux",
-      "version": "5.0.0",
-      "dependencies": [
-        "dbus",
-        "ffi",
-        "flutter",
-        "flutter_local_notifications_platform_interface",
-        "path",
-        "xdg_directories"
-      ]
-    },
-    {
-      "name": "fl_chart",
-      "version": "0.69.2",
-      "dependencies": [
-        "equatable",
-        "flutter"
-      ]
-    },
-    {
-      "name": "equatable",
-      "version": "2.0.8",
-      "dependencies": [
-        "collection",
-        "meta"
-      ]
-    },
-    {
-      "name": "timezone",
-      "version": "0.10.1",
-      "dependencies": [
-        "http",
-        "path"
       ]
     }
   ],

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
@@ -40,6 +41,8 @@ class CellScanner {
       final Map<String, dynamic> serviceState =
           await _channel.invokeMethod('getServiceState') as Map<String, dynamic>;
 
+      debugPrint('LB_CELL raw cells: ${rawCells.length}, networkType=${serviceState['networkTypeName']}');
+
       final now = DateTime.now();
       final networkType = serviceState['networkTypeName'] as String? ?? 'UNKNOWN';
       final signals = <LBSignal>[];
@@ -50,17 +53,16 @@ class CellScanner {
         if (signal != null) signals.add(signal);
       }
 
-      // Track network type transitions for downgrade detection
+      debugPrint('LB_CELL normalized ${signals.length} signals');
+
       if (_lastNetworkType != null && _lastNetworkType != networkType) {
         _injectDowngradeEvent(signals, _lastNetworkType!, networkType, sessionId, now);
       }
       _lastNetworkType = networkType;
 
-      // Track serving cell for instability detection
       final serving = signals.where((s) => s.metadata['is_serving'] == true).firstOrNull;
       if (serving != null) {
         _servingCellHistory.add((cellKey: serving.identifier, ts: now));
-        // Keep last 2 minutes of history
         final cutoff = now.subtract(const Duration(minutes: 2));
         _servingCellHistory.removeWhere((e) => e.ts.isBefore(cutoff));
       }
@@ -69,8 +71,10 @@ class CellScanner {
         _controller.add(signals);
       }
     } on PlatformException catch (e) {
-      // Permission not granted or radio off — emit empty list
+      debugPrint('LB_CELL PlatformException: ${e.code} — ${e.message}');
       if (!_controller.isClosed) _controller.add([]);
+    } catch (e) {
+      debugPrint('LB_CELL unexpected error: $e');
     }
   }
 

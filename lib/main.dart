@@ -132,7 +132,11 @@ class _AppShellState extends State<_AppShell> {
               threatCount:        _coordinator.threatCount,
               currentNetworkType: _coordinator.currentNetworkType,
             ),
-          1 => SignalListScreen(signals: _coordinator.latestSignals),
+          1 => StreamBuilder(
+                stream: _coordinator.signalStream,
+                builder: (_, __) =>
+                    SignalListScreen(signals: _coordinator.latestSignals),
+              ),
           2 => const ThreatLogScreen(),
           3 => OpsecScreen(
               opsec:             _coordinator.opsec,

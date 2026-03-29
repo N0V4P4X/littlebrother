@@ -46,18 +46,11 @@ class CellChannelHandler(private val context: Context) {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.R)
     fun getPhysicalChannels(result: MethodChannel.Result) {
-        try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                result.success(emptyList<Map<String, Any>>())
-                return
-            }
-            // PhysicalChannelConfig requires API 28+ for basic, 30+ for band info
-            result.success(emptyList<Map<String, Any>>()) // placeholder — needs listener
-        } catch (e: Exception) {
-            result.error("CHANNEL_CONFIG_ERROR", e.message, null)
-        }
+        // PhysicalChannelConfig requires a registered TelephonyCallback (API 31+)
+        // or PhoneStateListener (API 28–30) — one-shot polling isn't supported.
+        // Returns empty for now; a listener-based implementation is planned for Phase 6.
+        result.success(emptyList<Map<String, Any>>())
     }
 
     // ── Cell info parsers ──────────────────────────────────────────────────
@@ -187,10 +180,10 @@ class CellChannelHandler(private val context: Context) {
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun parseSignalStrength(sig: SignalStrength?): Map<String, Any> {
         if (sig == null) return emptyMap()
-        return mapOf(
-            "level" to sig.level,
-            "dbm" to sig.getCellSignalStrengths().firstOrNull()?.dbm.let { it ?: -1 }
-        )
+            return mapOf(
+                "level" to sig.level,
+                "dbm" to sig.getCellSignalStrengths().firstOrNull()?.dbm.let { it ?: -1 }
+            )
     }
 
     private fun networkTypeName(type: Int): String = when (type) {

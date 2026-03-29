@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/alerts/alert_engine.dart';
 import 'package:littlebrother/analyzer/lb_analyzer.dart';
@@ -6,6 +7,7 @@ import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/db/oui_lookup.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/core/wake_lock.dart';
 import 'package:littlebrother/modules/ble/ble_scanner.dart';
 import 'package:littlebrother/modules/cell/cell_scanner.dart';
 import 'package:littlebrother/modules/gps/gps_tracker.dart';
@@ -54,7 +56,9 @@ class ScanCoordinator {
   StreamSubscription<List<LBSignal>>? _cellSub;
 
   Future<void> init() async {
+    debugPrint('LB_COORD init start');
     await OuiLookup.instance.init();
+    debugPrint('LB_COORD OUI loaded');
 
     _alerts  = AlertEngine(_db);
     _opsec   = OpsecController();
@@ -65,33 +69,60 @@ class ScanCoordinator {
     _analyzer = LBAnalyzer(_db);
 
     await _alerts.init();
+    debugPrint('LB_COORD alerts init done');
     await _opsec.init();
+    debugPrint('LB_COORD opsec init done');
     await _gps.start();
+    debugPrint('LB_COORD gps started');
 
-    // Wire OPSEC auto-trigger
     _alerts.onOpsecTrigger = () async {
       await _opsec.killRf();
     };
 
-    // Forward threats to threat counter
     _alerts.threatStream.listen((_) {
       _threatCount++;
     });
+
+    debugPrint('LB_COORD init complete');
   }
 
   Future<void> startScan() async {
     if (isScanning) return;
     _sessionId = _uuid.v4();
+    debugPrint('LB_COORD startScan session=$_sessionId');
+
     final session = LBSession(id: _sessionId!, startedAt: DateTime.now());
     await _db.insertSession(session);
 
-    _wifiSub = _wifi.stream.listen((signals) => _onSignals(signals));
-    _bleSub  = _ble.stream.listen((signals) => _onSignals(signals));
-    _cellSub = _cell.stream.listen((signals) => _onSignals(signals));
+    _wifiSub = _wifi.stream.listen((signals) {
+      debugPrint('LB_COORD wifi batch: ${signals.length} signals');
+      _onSignals(signals);
+    }, onError: (e) => debugPrint('LB_COORD wifi stream error: $e'));
 
+    _bleSub = _ble.stream.listen((signals) {
+      debugPrint('LB_COORD ble batch: ${signals.length} signals');
+      _onSignals(signals);
+    }, onError: (e) => debugPrint('LB_COORD ble stream error: $e'));
+
+    _cellSub = _cell.stream.listen((signals) {
+      debugPrint('LB_COORD cell batch: ${signals.length} signals');
+      _onSignals(signals);
+    }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'));
+
+    debugPrint('LB_COORD starting wifi scanner');
     await _wifi.start(_sessionId!);
+    debugPrint('LB_COORD wifi scanner started, isRunning=${_wifi.isRunning}');
+
+    debugPrint('LB_COORD starting ble scanner');
     await _ble.start(_sessionId!);
+    debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
+
+    debugPrint('LB_COORD starting cell scanner');
     await _cell.start(_sessionId!);
+    debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
+
+    await LBWakeLock.acquire();
+    debugPrint('LB_COORD wake lock acquired');
   }
 
   Future<void> stopScan() async {
@@ -99,21 +130,22 @@ class ScanCoordinator {
     await _wifi.stop();
     await _ble.stop();
     await _cell.stop();
+    await LBWakeLock.release();
     _wifiSub?.cancel();
     _bleSub?.cancel();
     _cellSub?.cancel();
 
-    // Close session
     final stats = await _db.getSessionStats(_sessionId!);
     final session = LBSession(
       id: _sessionId!,
-      startedAt: DateTime.now(), // placeholder — we don't store start
+      startedAt: DateTime.now(),
       endedAt: DateTime.now(),
       observationCount: stats['total'] ?? 0,
       threatCount: _threatCount,
     );
     await _db.updateSession(session);
     _sessionId = null;
+    debugPrint('LB_COORD scan stopped');
   }
 
   Future<void> _onSignals(List<LBSignal> signals) async {

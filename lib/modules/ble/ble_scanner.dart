@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
@@ -24,15 +25,22 @@ class BleScanner {
     if (isRunning) return;
 
     final adapterState = await FlutterBluePlus.adapterState.first;
-    if (adapterState != BluetoothAdapterState.on) return;
+    debugPrint('LB_BLE adapterState=$adapterState');
+    if (adapterState != BluetoothAdapterState.on) {
+      debugPrint('LB_BLE adapter not on — bailing');
+      return;
+    }
 
+    debugPrint('LB_BLE calling startScan');
     await FlutterBluePlus.startScan(
-      timeout: const Duration(days: 365), // continuous
+      timeout: const Duration(days: 365),
       continuousUpdates: true,
       removeIfGone: const Duration(seconds: 30),
     );
+    debugPrint('LB_BLE startScan returned');
 
     _sub = FlutterBluePlus.scanResults.listen((results) {
+      debugPrint('LB_BLE scanResults batch: ${results.length} devices');
       final now = DateTime.now();
       final signals = results
           .map((r) => _normalize(r, sessionId, now))
@@ -41,7 +49,8 @@ class BleScanner {
       if (!_controller.isClosed) {
         _controller.add(signals);
       }
-    });
+    }, onError: (e) => debugPrint('LB_BLE scanResults error: $e'));
+    debugPrint('LB_BLE subscribed to scanResults');
   }
 
   Future<void> stop() async {

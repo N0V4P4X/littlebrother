@@ -17,8 +17,9 @@ class PermissionChannelHandler(private val activity: Activity)
         const val REQ_NEARBY_WIFI         = 1002
     }
 
-    private var pendingResult: MethodChannel.Result? = null
-    private var pendingCode: Int = 0
+    // Map of requestCode → pending MethodChannel.Result so concurrent
+    // permission requests don't clobber each other.
+    private val pendingResults = mutableMapOf<Int, MethodChannel.Result>()
 
     fun checkAndRequest(permission: String, requestCode: Int, result: MethodChannel.Result) {
         val status = ContextCompat.checkSelfPermission(activity, permission)
@@ -26,9 +27,8 @@ class PermissionChannelHandler(private val activity: Activity)
             result.success("granted")
             return
         }
-        // Store result callback — we'll resolve it in onRequestPermissionsResult
-        pendingResult = result
-        pendingCode   = requestCode
+        // Store result callback keyed by requestCode
+        pendingResults[requestCode] = result
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             ActivityCompat.requestPermissions(activity, arrayOf(permission), requestCode)
         }
@@ -39,9 +39,7 @@ class PermissionChannelHandler(private val activity: Activity)
         permissions: Array<out String>,
         grantResults: IntArray
     ): Boolean {
-        if (requestCode != pendingCode) return false
-        val result = pendingResult ?: return false
-        pendingResult = null
+        val result = pendingResults.remove(requestCode) ?: return false
 
         val granted = grantResults.isNotEmpty() &&
                 grantResults[0] == PackageManager.PERMISSION_GRANTED
