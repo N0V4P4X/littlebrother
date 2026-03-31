@@ -272,60 +272,60 @@ class LBDatabase {
 
   Future<void> insertObservationBatch(List<LBSignal> signals) async {
     if (signals.isEmpty) return;
-    try {
-      final database = await db;
-      final batch = database.batch();
-      
-      for (final s in signals) {
-        final map = s.toMap();
-        if (s.lat != null && s.lon != null) {
-          map['geohash'] = Geohash.encode(s.lat!, s.lon!, precision: 7);
-        }
+    final database = await db;
+    await database.transaction((txn) async {
+      try {
+        final batch = txn.batch();
         
-        // Upsert device_waypoints table for fast map queries
-        if (s.lat != null && s.lon != null) {
-          final now = s.timestamp.millisecondsSinceEpoch;
-          final vendor = s.metadata['vendor'] as String?;
-          final rssi = s.rssi;
+        for (final s in signals) {
+          final map = s.toMap();
+          if (s.lat != null && s.lon != null) {
+            map['geohash'] = Geohash.encode(s.lat!, s.lon!, precision: 7);
+          }
           
-          // Use INSERT OR REPLACE to handle upsert
-          // For new devices: insert
-          // For existing: update stats and position if newer
-          batch.rawInsert('''
-            INSERT INTO ${LBDb.tDeviceWaypoints} (
-              identifier, signal_type, display_name, lat, lon,
-              accuracy_m, rssi_avg, rssi_count, rssi_min, rssi_max,
-              first_seen, last_seen, obs_count, threat_flag, vendor, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(identifier) DO UPDATE SET
-              lat = excluded.lat,
-              lon = excluded.lon,
-              rssi_avg = CASE 
-                WHEN excluded.rssi_count > 0 THEN (${LBDb.tDeviceWaypoints}.rssi_avg * ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_avg * excluded.rssi_count) / (${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count)
-                ELSE excluded.rssi_avg
-              END,
-              rssi_count = ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count,
-              rssi_min = MIN(${LBDb.tDeviceWaypoints}.rssi_min, excluded.rssi_min),
-              rssi_max = MAX(${LBDb.tDeviceWaypoints}.rssi_max, excluded.rssi_max),
-              last_seen = MAX(${LBDb.tDeviceWaypoints}.last_seen, excluded.last_seen),
-              obs_count = ${LBDb.tDeviceWaypoints}.obs_count + excluded.obs_count,
-              threat_flag = MAX(${LBDb.tDeviceWaypoints}.threat_flag, excluded.threat_flag),
-              metadata_json = excluded.metadata_json
-          ''', [
-            s.identifier, s.signalType, s.displayName, s.lat, s.lon,
-            null, rssi, 1, rssi, rssi,
-            now, now, 1, s.threatFlag, vendor, jsonEncode(s.metadata),
-          ]);
+          // Upsert device_waypoints table for fast map queries
+          if (s.lat != null && s.lon != null) {
+            final now = s.timestamp.millisecondsSinceEpoch;
+            final vendor = s.metadata['vendor'] as String?;
+            final rssi = s.rssi;
+            
+            batch.rawInsert('''
+              INSERT INTO ${LBDb.tDeviceWaypoints} (
+                identifier, signal_type, display_name, lat, lon,
+                accuracy_m, rssi_avg, rssi_count, rssi_min, rssi_max,
+                first_seen, last_seen, obs_count, threat_flag, vendor, metadata_json
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(identifier) DO UPDATE SET
+                lat = excluded.lat,
+                lon = excluded.lon,
+                rssi_avg = CASE 
+                  WHEN ${LBDb.tDeviceWaypoints}.rssi_count > 0 THEN (${LBDb.tDeviceWaypoints}.rssi_avg * ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_avg * excluded.rssi_count) / (${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count)
+                  ELSE excluded.rssi_avg
+                END,
+                rssi_count = ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count,
+                rssi_min = MIN(${LBDb.tDeviceWaypoints}.rssi_min, excluded.rssi_min),
+                rssi_max = MAX(${LBDb.tDeviceWaypoints}.rssi_max, excluded.rssi_max),
+                last_seen = MAX(${LBDb.tDeviceWaypoints}.last_seen, excluded.last_seen),
+                obs_count = ${LBDb.tDeviceWaypoints}.obs_count + excluded.obs_count,
+                threat_flag = MAX(${LBDb.tDeviceWaypoints}.threat_flag, excluded.threat_flag),
+                metadata_json = excluded.metadata_json
+            ''', [
+              s.identifier, s.signalType, s.displayName, s.lat, s.lon,
+              null, rssi, 1, rssi, rssi,
+              now, now, 1, s.threatFlag, vendor, jsonEncode(s.metadata),
+            ]);
+          }
+          
+          // Still insert into observations for history/timeline
+          batch.insert(LBDb.tObservations, map,
+              conflictAlgorithm: ConflictAlgorithm.replace);
         }
-        
-        // Still insert into observations for history/timeline
-        batch.insert(LBDb.tObservations, map,
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await batch.commit(noResult: true);
+      } catch (e) {
+        debugPrint('LB_DB insertObservationBatch error: $e');
+        rethrow;
       }
-      await batch.commit(noResult: true);
-    } catch (e) {
-      debugPrint('LB_DB insertObservationBatch error: $e');
-    }
+    });
   }
 
   Future<List<LBSignal>> getObservationsBySession(String sessionId, {int? limit, int? offset}) async {
@@ -759,35 +759,41 @@ class LBDatabase {
     _lastRebuildMs = now;
     
     final database = await db;
-    await database.delete(
-      LBDb.tAggregateCells,
-      where: 'precision = ?',
-      whereArgs: [precision],
-    );
+    await database.transaction((txn) async {
+      await txn.delete(
+        LBDb.tAggregateCells,
+        where: 'precision = ?',
+        whereArgs: [precision],
+      );
 
-    await database.rawInsert('''
-      INSERT INTO ${LBDb.tAggregateCells}
-        (geohash, precision, device_count, obs_count, worst_flag,
-         wifi_count, ble_count, cell_count, most_recent)
-      SELECT
-        COALESCE(
-          o.geohash,
-          SUBSTR(o.metadata_json, INSTR(o.metadata_json, '"geohash":"') + 11, $precision)
-        ) AS geohash,
-        $precision,
-        COUNT(DISTINCT o.identifier) AS device_count,
-        COUNT(*) AS obs_count,
-        MAX(o.threat_flag) AS worst_flag,
-        SUM(CASE WHEN o.signal_type = 'wifi' THEN 1 ELSE 0 END) AS wifi_count,
-        SUM(CASE WHEN o.signal_type = 'ble' THEN 1 ELSE 0 END) AS ble_count,
-        SUM(CASE WHEN o.signal_type IN ('cell','cell_neighbor') THEN 1 ELSE 0 END) AS cell_count,
-        MAX(o.ts) AS most_recent
-      FROM ${LBDb.tObservations} o
-      WHERE (o.lat IS NOT NULL AND o.lon IS NOT NULL)
-         OR (o.geohash IS NOT NULL)
-         OR (o.metadata_json LIKE '%geohash%')
-      GROUP BY geohash
-    ''');
+      await txn.rawInsert('''
+        INSERT INTO ${LBDb.tAggregateCells}
+          (geohash, precision, device_count, obs_count, worst_flag,
+           wifi_count, ble_count, cell_count, most_recent)
+        SELECT
+          COALESCE(
+            o.geohash,
+            CASE 
+              WHEN INSTR(o.metadata_json, '"geohash":"') > 0 THEN SUBSTR(o.metadata_json, INSTR(o.metadata_json, '"geohash":"') + 11, $precision)
+              WHEN INSTR(o.metadata_json, '"geohash": "') > 0 THEN SUBSTR(o.metadata_json, INSTR(o.metadata_json, '"geohash": "') + 12, $precision)
+              ELSE NULL
+            END
+          ) AS geohash,
+          $precision AS p,
+          COUNT(DISTINCT o.identifier) AS device_count,
+          COUNT(*) AS obs_count,
+          MAX(o.threat_flag) AS worst_flag,
+          SUM(CASE WHEN o.signal_type = 'wifi' THEN 1 ELSE 0 END) AS wifi_count,
+          SUM(CASE WHEN o.signal_type = 'ble' THEN 1 ELSE 0 END) AS ble_count,
+          SUM(CASE WHEN o.signal_type IN ('cell','cell_neighbor') THEN 1 ELSE 0 END) AS cell_count,
+          MAX(o.ts) AS most_recent
+        FROM ${LBDb.tObservations} o
+        WHERE (o.lat IS NOT NULL AND o.lon IS NOT NULL)
+           OR (o.geohash IS NOT NULL)
+           OR (o.metadata_json LIKE '%geohash%')
+        GROUP BY p, geohash
+      ''');
+    });
     
     // Log statistics for debugging
     final totalObs = Sqflite.firstIntValue(await database.rawQuery(
@@ -812,6 +818,7 @@ class LBDatabase {
     int? minThreatFlag,
     int? sinceMs,
     int? limit,
+    int? offset,
   }) async {
     final database = await db;
     final conditions = <String>['precision = ?'];
@@ -836,6 +843,7 @@ class LBDatabase {
       whereArgs: args,
       orderBy: 'obs_count DESC',
       limit: limit,
+      offset: offset,
     );
 
     return rows;
