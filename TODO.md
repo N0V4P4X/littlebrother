@@ -258,6 +258,67 @@
 
 ---
 
+## Round 4 Fixes (2026-03-31) - Gridded Map Not Displaying
+
+### Critical - Gridded Map Debugging
+
+#### 4.1 GPS State Not Tracked
+- **File:** `lib/modules/gps/gps_tracker.dart`
+- **Issue:** No way to know if GPS was actually running, had fresh fix, or had errors
+- **Fix:** Added singleton pattern (GpsTracker.instance), added `_isRunning`, `_lastError`, comprehensive debug logging
+- **Status:** [FIXED]
+
+#### 4.2 Scan Coordinator GPS Debug Logging
+- **File:** `lib/core/scan_coordinator.dart:232-245`
+- **Issue:** No visibility into why signals weren't getting geotagged
+- **Fix:** Added debug logging showing hasFreshFix, isRunning, lastPosition when skipping geotag
+- **Status:** [FIXED]
+
+#### 4.3 Missing Geohash Migration for Old Observations
+- **File:** `lib/core/db/lb_database.dart:635-658`
+- **Issue:** Old observations have NULL geohash column, grid couldn't aggregate them
+- **Fix:** Added `migrateGeohashForExistingObservations()` to extract geohash from metadata JSON
+- **Status:** [FIXED]
+
+#### 4.4 Database Diagnostic Methods
+- **File:** `lib/core/db/lb_database.dart:808-844`
+- **Issue:** No way to query GPS status or observation stats from UI
+- **Fix:** Added `getGpsStatus()` and `getObservationStats()` methods
+- **Status:** [FIXED]
+
+#### 4.5 Aggregate Map UI Debug Info
+- **File:** `lib/ui/screens/aggregate_map_screen.dart`
+- **Issue:** No feedback when map shows "NO DATA" - user doesn't know why
+- **Fix:** 
+  - Runs geohash migration on init
+  - Shows GPS status and observation stats in debug mode (kDebugMode)
+  - Shows total observations, with lat/lon, with geohash counts
+- **Status:** [FIXED]
+
+---
+
+## Round 5 (2026-03-31) - New Scanner Providers
+
+### 5.1 Shell Scanner Module
+- **File:** `lib/modules/shell/shell_scanner.dart`
+- **Issue:** Need ability to execute shell commands and parse output as signals
+- **Fix:** Created ShellScanner class that runs commands (arp -a, iwlist scan) on configurable intervals
+- **Status:** [FIXED]
+
+### 5.2 MQTT Scanner Module
+- **File:** `lib/modules/mqtt/mqtt_scanner.dart`
+- **Issue:** Need ability to subscribe to MQTT broker for external signal data
+- **Fix:** Created MqttScanner with configurable broker URL, port, credentials, topics
+- **Status:** [FIXED]
+
+### 5.3 Bluetooth Classic Scanner
+- **File:** `lib/modules/bt_classic/bt_classic_scanner.dart`
+- **Issue:** Need classic Bluetooth (BR/EDR) device discovery on Linux
+- **Fix:** Uses bluetoothctl to scan for paired/visible BT devices
+- **Status:** [FIXED]
+
+---
+
 ## Implementation Order
 
 1. [x] Create TODO.md (2026-03-29)
@@ -269,7 +330,8 @@
 7. [x] Database #6.1 - #6.2 (scalability)
 8. [x] Logic bugs #8.1 - #8.2 (edge cases)
 9. [x] Round 2 fixes #2.1 - #2.6 (compile errors, performance)
-9. [x] Documentation #9.1 - #9.3 (maintenance)
+10. [x] Documentation #9.1 - #9.3 (maintenance)
+11. [x] Round 4 fixes #4.1 - #4.5 (gridded map debugging - GPS tracking, geohash migration, diagnostics)
 
 ---
 
@@ -286,4 +348,8 @@
 | P7 | Consistency | 2 | 2 |
 | P8 | Logic Bugs | 2 | 2 |
 | P9 | Documentation | 3 | 3 |
-| **Total** | | **27** | **27** |
+| Round 2 | Compile Errors | 6 | 6 |
+| Round 3 | Race Conditions | 2 | 2 |
+| Round 4 | Gridded Map | 5 | 5 |
+| Round 5 | New Providers | 3 | 3 |
+| **Total** | | **43** | **43** |

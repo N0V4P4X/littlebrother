@@ -186,6 +186,7 @@ Detection algorithms (stingray, rogue AP, BLE tracker) are platform-agnostic and
 - **Signal cache**: Unbounded cache can grow large over long sessions (mitigated with 5000 signal limit)
 - **Aggregate map**: Limited to 200 cells for performance
 - **Timeline export**: Large sessions may take time to generate CSV
+- **Intel Map debug mode**: Debug builds show GPS status and observation statistics in toolbar (visible in `flutter run` or debug APK)
 
 ### Reporting Bugs
 
@@ -193,6 +194,178 @@ Please open an issue at https://github.com/N0V4P4X/littlebrother/issues using th
 - Device model and Android version
 - Steps to reproduce
 - Relevant log output (adb logcat | grep LB_)
+
+---
+
+## Troubleshooting the Intel Map (GRID Layer)
+
+If the gridded map shows "NO DATA" after running scan sessions, follow these diagnostic steps.
+
+---
+
+## Scanners & Providers
+
+LittleBrother supports multiple scanning sources (providers) that can run concurrently:
+
+### Built-in Scanners
+
+| Scanner | Platform | Description |
+|---------|----------|-------------|
+| **WiFi** | All | Discovers nearby WiFi access points |
+| **BLE** | All | Scans for Bluetooth Low Energy devices |
+| **Cell** | Android | Detects cellular towers and neighbors |
+| **GPS** | All | Tracks device location for geotagging |
+
+### Extended Providers (Linux)
+
+| Provider | Description |
+|----------|-------------|
+| **Shell Scanner** | Executes shell commands and parses output as signals. Currently configured for `arp -a` (network devices) and `iwlist scan` (WiFi details). |
+| **MQTT Scanner** | Subscribes to an MQTT broker for external signal data. Configurable broker URL, port, credentials, and topics. |
+| **Bluetooth Classic** | Uses `bluetoothctl` to discover classic Bluetooth (BR/EDR) devices on Linux. |
+
+### Running with Debug Output
+
+Use the debug script to see terminal output:
+
+```bash
+./scripts/run_debug.sh
+```
+
+This launches the app in debug mode so you can observe scanner activity and troubleshoot issues.
+
+---
+
+### Understanding the Debug Output
+
+In debug builds (debug APK or `flutter run`), the Intel Map toolbar displays diagnostic information:
+
+```
+GPS: ✓ {lat: 37.7749, lon: -122.4194}
+Data: 1500 total, 1200 with lat/lon, 800 with geohash
+```
+
+Or if there's a problem:
+
+```
+GPS: ✗ (running=false, error=Permission denied)
+Data: 0 total, 0 with lat/lon, 0 with geohash
+```
+
+### Common Issues and Solutions
+
+#### 1. GPS: ✗ (running=false, error=Permission denied)
+
+**Problem:** Location permission not granted.
+
+**Solution:**
+1. Go to Settings → Apps → LittleBrother → Permissions
+2. Grant Location permission (Allow all the time for best results)
+3. Restart the app
+
+#### 2. GPS: ✗ (running=false, error=null)
+
+**Problem:** GPS service not started or hardware unavailable.
+
+**Solution:**
+1. Ensure Location is enabled in system settings
+2. Check device has GPS hardware
+3. Restart the app to retry GPS initialization
+
+#### 3. GPS: ✓ but Data shows 0 total observations
+
+**Problem:** No scan sessions have been run yet.
+
+**Solution:**
+1. Go to the RADAR screen
+2. Start a scan session and let it run for a minute
+3. Return to the Intel Map and refresh
+
+#### 4. Data shows observations but 0 with lat/lon
+
+**Problem:** Signals were captured but GPS wasn't providing location at scan time.
+
+**Solution:**
+1. Ensure GPS has a fresh fix (fresh location within last 30 seconds)
+2. Start scan sessions while GPS is actively tracking
+3. Check the debug log: `adb logcat | grep -i "coord"` for "Skipping geotag" messages
+
+#### 5. Data shows observations with lat/lon but 0 with geohash
+
+**Problem:** Old observations from before the geohash column was added.
+
+**Solution:**
+1. The app automatically migrates geohash on map load
+2. If still showing 0, try a fresh scan session
+3. For existing data, force rebuild: the aggregate rebuild runs automatically but has a 5-minute cache
+
+#### 6. Grid shows cells but map is blank
+
+**Problem:** Cells exist but aren't being rendered properly.
+
+**Solution:**
+1. Try changing precision (RES selector): coarse (1.2km), standard (150m), fine (38m)
+2. Check filter settings (TIME, THREAT filters may be too restrictive)
+3. Try TimeRange: ALL to see all historical data
+
+### Force Refresh the Aggregate Data
+
+The aggregate cells are rebuilt with a 5-minute cache to avoid expensive recomputation. To force a refresh:
+
+1. Wait 5 minutes since last map view, OR
+2. Modify the time filter (change from ALL to 24h and back) which triggers a reload, OR
+3. Kill and restart the app (cache is stored in memory only)
+
+### Manual Database Inspection
+
+To inspect the database directly:
+
+```bash
+# Pull the database from Android device
+adb pull /data/data/art.n0v4.littlebrother/files/lbscan.db ./lbscan.db
+
+# Inspect with sqlite3
+sqlite3 lbscan.db
+
+# Check observation counts
+SELECT COUNT(*) FROM observations;
+SELECT COUNT(*) FROM observations WHERE lat IS NOT NULL;
+SELECT COUNT(*) FROM observations WHERE geohash IS NOT NULL;
+
+# Check aggregate cells
+SELECT COUNT(*) FROM aggregate_cells;
+SELECT * FROM aggregate_cells LIMIT 10;
+
+# Check GPS metadata in observations
+SELECT id, signal_type, lat, lon, geohash FROM observations LIMIT 5;
+```
+
+### Signal Flow for Geotagging
+
+```
+1. GpsTracker.start() → begins location stream
+2. ScanCoordinator._onSignals() → receives signal batch
+3. If GpsTracker.hasFreshFix (fix < 30 sec old):
+   - Copy lat/lon from lastPosition to each signal
+   - Compute geohash from lat/lon
+   - Store in signal.metadata['geohash']
+4. LBSignal.toMap() → writes to database (lat, lon, geohash columns)
+5. rebuildAggregateCells() → groups by geohash, creates grid cells
+```
+
+If any step fails, the signal won't have coordinates and won't appear on the grid.
+
+### Precision Levels
+
+The grid supports three geohash precision levels:
+
+| Precision | Characters | Approximate Size | Use Case |
+|-----------|-------------|------------------|----------|
+| Coarse    | 6           | 1.2 km × 0.6 km  | Wide-area surveys, sparse data |
+| Standard  | 7           | 150 m × 75 m     | Normal wardriving (default) |
+| Fine      | 8           | 38 m × 19 m      | Dense urban areas, detailed mapping |
+
+Lower precision = fewer, larger cells = more likely to have data. If coarse works but fine shows nothing, your data is sparse.
 
 ---
 

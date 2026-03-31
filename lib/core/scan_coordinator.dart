@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/alerts/alert_engine.dart';
@@ -13,6 +14,9 @@ import 'package:littlebrother/modules/ble/ble_scanner.dart';
 import 'package:littlebrother/modules/cell/cell_scanner.dart';
 import 'package:littlebrother/modules/gps/gps_tracker.dart';
 import 'package:littlebrother/modules/wifi/wifi_scanner.dart';
+import 'package:littlebrother/modules/mqtt/mqtt_scanner.dart';
+import 'package:littlebrother/modules/shell/shell_scanner.dart';
+import 'package:littlebrother/modules/bt_classic/bt_classic_scanner.dart';
 import 'package:littlebrother/opsec/opsec_controller.dart';
 
 /// Central orchestrator: manages scanner lifecycle, feeds analyzer,
@@ -28,6 +32,9 @@ class ScanCoordinator {
   late final LBAnalyzer   _analyzer;
   late final AlertEngine  _alerts;
   late final OpsecController _opsec;
+  late final ShellScanner _shell;
+  late final MqttScanner  _mqtt;
+  late final BtClassicScanner _btClassic;
 
   // Merge stream: all signals from all scanners
   final _signalCtrl = StreamController<List<LBSignal>>.broadcast();
@@ -72,8 +79,10 @@ class ScanCoordinator {
   StreamSubscription<List<LBSignal>>? _cellSub;
 
   Future<void> init() async {
+    stderr.write('LB_COORD: init start (${LBPlatform.name})\n');
     debugPrint('LB_COORD init start (${LBPlatform.name})');
     await OuiLookup.instance.init();
+    stderr.write('LB_COORD: OUI loaded\n');
     debugPrint('LB_COORD OUI loaded');
 
     _alerts   = AlertEngine(_db);
@@ -81,43 +90,61 @@ class ScanCoordinator {
     _wifi     = WifiScanner();
     _ble      = BleScanner();
     _cell     = CellScanner();
-    _gps      = GpsTracker();
+    _gps      = GpsTracker.instance;
     _analyzer = LBAnalyzer(_db);
+    _shell    = ShellScanner();
+    // MQTT scanner disabled temporarily due to API complexity
+    // _mqtt     = MqttScanner(
+    //   brokerUrl: 'test.mosquitto.org', // Public test broker
+    //   port: 1883,
+    //   topics: ['lb/signals/#'],
+    // );
+    _mqtt = MqttScanner(brokerUrl: 'test.mosquitto.org');
+    _btClassic = BtClassicScanner();
 
     try {
       await _alerts.init();
+      stderr.write('LB_COORD: alerts init done\n');
       debugPrint('LB_COORD alerts init done');
     } catch (e) {
+      stderr.write('LB_COORD: alerts init failed (non-fatal): $e\n');
       debugPrint('LB_COORD alerts init failed (non-fatal): $e');
     }
 
     if (LBPlatform.supportsRfKill) {
       await _opsec.init();
+      stderr.write('LB_COORD: opsec init done\n');
       debugPrint('LB_COORD opsec init done');
       _alerts.onOpsecTrigger = () async {
         await _opsec.killRf();
       };
     } else {
+      stderr.write('LB_COORD: opsec: not available on ${LBPlatform.name}\n');
       debugPrint('LB_COORD opsec: not available on ${LBPlatform.name}');
     }
 
     final gpsStarted = await _gps.start();
     if (gpsStarted) {
+      stderr.write('LB_COORD: gps started\n');
       debugPrint('LB_COORD gps started');
     } else {
+      stderr.write('LB_COORD: gps failed to start - location features disabled\n');
       debugPrint('LB_COORD gps failed to start - location features disabled');
     }
 
     _alerts.threatStream.listen((_) {
       _threatCount++;
+      stderr.write('LB_COORD: threat detected (count: $_threatCount)\n');
     });
 
+    stderr.write('LB_COORD: init complete\n');
     debugPrint('LB_COORD init complete');
   }
 
   Future<void> startScan() async {
     if (isScanning) return;
     
+    stderr.write('LB_COORD: startScan called\n');
     _wifiSub?.cancel();
     _bleSub?.cancel();
     _cellSub?.cancel();
@@ -127,69 +154,153 @@ class ScanCoordinator {
     try {
       _sessionId = _uuid.v4();
       _sessionStartTime = DateTime.now();
+      stderr.write('LB_COORD: startScan session=$_sessionId\n');
       debugPrint('LB_COORD startScan session=$_sessionId');
 
+      stderr.write('LB_COORD: inserting session to DB\n');
       debugPrint('LB_COORD inserting session to DB');
       final session = LBSession(id: _sessionId!, startedAt: _sessionStartTime!);
       await _db.insertSession(session);
+      stderr.write('LB_COORD: session inserted\n');
       debugPrint('LB_COORD session inserted');
 
+      stderr.write('LB_COORD: subscribing to wifi stream\n');
       debugPrint('LB_COORD subscribing to wifi stream');
-      _wifiSub = _wifi.stream.listen((signals) {
-        debugPrint('LB_COORD wifi batch: ${signals.length} signals');
-        _onSignals(signals);
-      }, onError: (e) => debugPrint('LB_COORD wifi stream error: $e'), onDone: () {
-        debugPrint('LB_COORD wifi stream done');
-      });
+      _wifiSub = _wifi.stream.listen(
+        (List<LBSignal> signals) {
+          stderr.write('LB_COORD: wifi batch: ${signals.length} signals\n');
+          debugPrint('LB_COORD wifi batch: ${signals.length} signals');
+          _onSignals(signals);
+        },
+        onError: (e) {
+          stderr.write('LB_COORD: wifi stream error: $e\n');
+          debugPrint('LB_COORD wifi stream error: $e');
+        },
+        onDone: () {
+          stderr.write('LB_COORD: wifi stream done\n');
+          debugPrint('LB_COORD wifi stream done');
+        }
+      );
 
+      stderr.write('LB_COORD: subscribing to ble stream\n');
       debugPrint('LB_COORD subscribing to ble stream');
-      _bleSub = _ble.stream.listen((signals) {
-        debugPrint('LB_COORD ble batch: ${signals.length} signals');
-        _onSignals(signals);
-      }, onError: (e) => debugPrint('LB_COORD ble stream error: $e'), onDone: () {
-        debugPrint('LB_COORD ble stream done');
-      });
+      _bleSub = _ble.stream.listen(
+        (List<LBSignal> signals) {
+          stderr.write('LB_COORD: ble batch: ${signals.length} signals\n');
+          debugPrint('LB_COORD ble batch: ${signals.length} signals');
+          _onSignals(signals);
+        },
+        onError: (e) {
+          stderr.write('LB_COORD: ble stream error: $e\n');
+          debugPrint('LB_COORD ble stream error: $e');
+        },
+        onDone: () {
+          stderr.write('LB_COORD: ble stream done\n');
+          debugPrint('LB_COORD ble stream done');
+        }
+      );
 
+      stderr.write('LB_COORD: starting wifi scanner\n');
       debugPrint('LB_COORD starting wifi scanner');
       await _wifi.start(_sessionId!);
+      stderr.write('LB_COORD: wifi scanner started, isRunning=${_wifi.isRunning}\n');
       debugPrint('LB_COORD wifi scanner started, isRunning=${_wifi.isRunning}');
 
+      stderr.write('LB_COORD: starting ble scanner\n');
       debugPrint('LB_COORD starting ble scanner');
       await _ble.start(_sessionId!);
+      stderr.write('LB_COORD: ble scanner started, isRunning=${_ble.isRunning}\n');
       debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
 
       if (LBPlatform.supportsCellScanning) {
+        stderr.write('LB_COORD: starting cell scanner\n');
         debugPrint('LB_COORD starting cell scanner');
-        _cellSub = _cell.stream.listen((signals) {
+      _cellSub = _cell.stream.listen(
+        (List<LBSignal> signals) {
+          stderr.write('LB_COORD: cell batch: ${signals.length} signals\n');
           debugPrint('LB_COORD cell batch: ${signals.length} signals');
           _onSignals(signals);
-        }, onError: (e) => debugPrint('LB_COORD cell stream error: $e'), onDone: () {
+        },
+        onError: (e) {
+          stderr.write('LB_COORD: cell stream error: $e\n');
+          debugPrint('LB_COORD: cell stream error: $e');
+        },
+        onDone: () {
+          stderr.write('LB_COORD: cell stream done\n');
           debugPrint('LB_COORD cell stream done');
-        });
+        }
+      );
         await _cell.start(_sessionId!);
+        stderr.write('LB_COORD: cell scanner started, isRunning=${_cell.isRunning}\n');
         debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
       } else {
+        stderr.write('LB_COORD: cell scanner: not available on ${LBPlatform.name}\n');
         debugPrint('LB_COORD cell scanner: not available on ${LBPlatform.name}');
+      }
+
+      // Start Shell Scanner
+      stderr.write('LB_COORD: starting shell scanner\n');
+      await _shell.start(_sessionId!);
+      stderr.write('LB_COORD: shell scanner started\n');
+
+      // Start MQTT Scanner (only if we want to enable it - for now comment out to avoid connection issues during testing)
+      // stderr.write('LB_COORD: starting MQTT scanner\n');
+      // await _mqtt.start(_sessionId!);
+      // stderr.write('LB_COORD: MQTT scanner started\n');
+
+      // Start Bluetooth Classic Scanner (Linux only)
+      if (Platform.isLinux) {
+        stderr.write('LB_COORD: starting Bluetooth Classic scanner\n');
+        await _btClassic.start(_sessionId!);
+        stderr.write('LB_COORD: Bluetooth Classic scanner started\n');
+      } else {
+        stderr.write('LB_COORD: Bluetooth Classic scanner: not available on ${LBPlatform.name}\n');
+        debugPrint('LB_COORD Bluetooth Classic scanner: not available on ${LBPlatform.name}');
       }
 
       if (LBPlatform.supportsWakeLock) {
         await LBWakeLock.acquire();
+        stderr.write('LB_COORD: wake lock acquired\n');
         debugPrint('LB_COORD wake lock acquired');
       }
-    } catch (e, st) {
-      debugPrint('LB_COORD startScan ERROR: $e\n$st');
-    }
+      
+      stderr.write('LB_COORD: startScan completed successfully\n');
+  } catch (e, st) {
+    stderr.write('LB_COORD: startScan ERROR: $e\n$st\n');
+    debugPrint('LB_COORD startScan ERROR: $e\n$st');
+  }
   }
 
   Future<void> stopScan() async {
     if (!isScanning) return;
+    stderr.write('LB_COORD: stopScan called\n');
+
+    stderr.write('LB_COORD: stopping wifi scanner\n');
     await _wifi.stop();
+    stderr.write('LB_COORD: stopping ble scanner\n');
     await _ble.stop();
     if (LBPlatform.supportsCellScanning) {
+      stderr.write('LB_COORD: stopping cell scanner\n');
       await _cell.stop();
     }
+    
+    // Stop Shell Scanner
+    stderr.write('LB_COORD: stopping shell scanner\n');
+    await _shell.stop();
+    
+    // Stop MQTT Scanner (if enabled)
+    // stderr.write('LB_COORD: stopping MQTT scanner\n');
+    // await _mqtt.stop();
+    
+    // Stop Bluetooth Classic Scanner (Linux only)
+    if (Platform.isLinux) {
+      stderr.write('LB_COORD: stopping Bluetooth Classic scanner\n');
+      await _btClassic.stop();
+    }
+    
     if (LBPlatform.supportsWakeLock) {
       await LBWakeLock.release();
+      stderr.write('LB_COORD: wake lock released\n');
     }
     _wifiSub?.cancel();
     _bleSub?.cancel();
@@ -207,117 +318,124 @@ class ScanCoordinator {
     _sessionId = null;
     _sessionStartTime = null;
     _threatCount = 0;
+    stderr.write('LB_COORD: scan stopped\n');
     debugPrint('LB_COORD scan stopped');
   }
 
-  Future<void> _onSignals(List<LBSignal> signals) async {
-    if (_processingSignals) {
-      debugPrint('LB_COORD _onSignals: already processing, skipping batch');
-      return;
-    }
-    if (_sessionId == null) {
-      debugPrint('LB_COORD _onSignals: no session, skipping');
-      return;
-    }
-    if (signals.isEmpty) {
-      debugPrint('LB_COORD _onSignals: empty batch, skipping');
-      return;
-    }
-    
-    _processingSignals = true;
-    
-    try {
-      debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
+    Future<void> _onSignals(List<LBSignal> signals) async {
+      if (_processingSignals) {
+        stderr.write('LB_COORD: _onSignals: already processing, skipping batch\n');
+        debugPrint('LB_COORD _onSignals: already processing, skipping batch');
+        return;
+      }
+      if (_sessionId == null) {
+        stderr.write('LB_COORD: _onSignals: no session, skipping\n');
+        debugPrint('LB_COORD _onSignals: no session, skipping');
+        return;
+      }
+      if (signals.isEmpty) {
+        stderr.write('LB_COORD: _onSignals: empty batch, skipping\n');
+        debugPrint('LB_COORD _onSignals: empty batch, skipping');
+        return;
+      }
+      
+      _processingSignals = true;
+      try {
+        stderr.write('LB_COORD: _onSignals processing ${signals.length} signals\n');
+        debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
 
-      // Stamp GPS onto each signal
-      final geotagged = signals.map((s) {
-        if (_gps.hasFreshFix && _gps.lastPosition != null) {
-          final stamped = s.copyWith(
-            lat: _gps.lastPosition!.latitude,
-            lon: _gps.lastPosition!.longitude,
-          );
-          if (_gps.currentGeohash != null) {
-            stamped.metadata['geohash'] = _gps.currentGeohash!;
+        // Stamp GPS onto each signal
+        final geotagged = signals.map((s) {
+          if (_gps.hasFreshFix && _gps.lastPosition != null) {
+            final stamped = s.copyWith(
+              lat: _gps.lastPosition!.latitude,
+              lon: _gps.lastPosition!.longitude,
+            );
+            if (_gps.currentGeohash != null) {
+              stamped.metadata['geohash'] = _gps.currentGeohash!;
+            }
+            return stamped;
           }
-          return stamped;
+          return s;
+        }).toList();
+
+        // Update latest cache
+        for (final s in geotagged) {
+          if (s.identifier != 'DOWNGRADE_EVENT') {
+            _latestSignals[s.identifier] = s;
+          }
         }
-        return s;
-      }).toList();
+        _pruneSignalsCache();
 
-      // Update latest cache
-      for (final s in geotagged) {
-      if (s.identifier != 'DOWNGRADE_EVENT') {
-        _latestSignals[s.identifier] = s;
-      }
-    }
-    _pruneSignalsCache();
+        stderr.write('LB_COORD: cache updated, now tracking ${_latestSignals.length} unique signals\n');
 
-    // Update network type display
-    final cell = geotagged.where((s) =>
-        s.signalType == LBSignalType.cell &&
-        s.metadata['is_serving'] == true).firstOrNull;
-    if (cell != null) {
-      final nt = cell.metadata['network_type_name'] as String?;
-      if (nt != null) _currentNetworkType = nt;
-    } else {
-      _currentNetworkType = '---';
-    }
+        // Update network type display
+        final cell = geotagged.where((s) =>
+            s.signalType == LBSignalType.cell &&
+            s.metadata['is_serving'] == true).firstOrNull;
+        if (cell != null) {
+          final nt = cell.metadata['network_type_name'] as String?;
+          if (nt != null) _currentNetworkType = nt;
+        } else {
+          _currentNetworkType = '---';
+        }
 
-    // Persist batch
-    await _db.insertObservationBatch(geotagged);
+        // Persist batch
+        await _db.insertObservationBatch(geotagged);
+        stderr.write('LB_COORD: persisted ${geotagged.length} signals to DB\n');
 
-    // Update cell baselines
-    for (final s in geotagged) {
-      if ((s.signalType == LBSignalType.cell || s.signalType == LBSignalType.cellNeighbor) &&
-          s.identifier != 'DOWNGRADE_EVENT' &&
-          _gps.currentGeohash != null) {
-        await _db.upsertCellBaseline(
-          geohash:     _gps.currentGeohash!,
-          cellKey:     s.identifier,
-          networkType: s.metadata['type'] as String? ?? 'UNKNOWN',
-          rssi:        s.rssi,
+        // Update cell baselines
+        for (final s in geotagged) {
+          if ((s.signalType == LBSignalType.cell || s.signalType == LBSignalType.cellNeighbor) &&
+              s.identifier != 'DOWNGRADE_EVENT' &&
+              _gps.currentGeohash != null) {
+            await _db.upsertCellBaseline(
+              geohash:     _gps.currentGeohash!,
+              cellKey:     s.identifier,
+              networkType: s.metadata['type'] as String? ?? 'UNKNOWN',
+              rssi:        s.rssi,
+            );
+          }
+        }
+
+        // Update known devices
+        for (final s in geotagged) {
+          if (s.identifier != 'DOWNGRADE_EVENT') {
+            final vendor = s.metadata['vendor'] as String? ?? '';
+            await _db.upsertKnownDevice(s, vendor);
+          }
+        }
+
+        // Run analyzer
+        final threats = await _analyzer.analyze(
+          geotagged,
+          geohash: _gps.currentGeohash,
+          servingCellChangesPerMinute: LBPlatform.supportsCellScanning
+              ? _cell.servingCellChangesPerMinute() : 0,
+          tacChangesPerMinute: LBPlatform.supportsCellScanning
+              ? _cell.tacChangesPerMinute() : 0,
+          neighborInstabilityScore: LBPlatform.supportsCellScanning
+              ? _cell.neighborInstabilityScore() : 0,
         );
+        if (threats.isNotEmpty) {
+          await _alerts.handleThreatEvents(threats);
+        }
+
+        // Broadcast to UI
+        if (!_signalCtrl.isClosed) {
+          _signalCtrl.add(geotagged);
+        }
+      } finally {
+        _processingSignals = false;
       }
     }
-
-    // Update known devices
-    for (final s in geotagged) {
-      if (s.identifier != 'DOWNGRADE_EVENT') {
-        final vendor = s.metadata['vendor'] as String? ?? '';
-        await _db.upsertKnownDevice(s, vendor);
-      }
-    }
-
-    // Run analyzer
-    final threats = await _analyzer.analyze(
-      geotagged,
-      geohash: _gps.currentGeohash,
-      servingCellChangesPerMinute: LBPlatform.supportsCellScanning
-          ? _cell.servingCellChangesPerMinute() : 0,
-      tacChangesPerMinute: LBPlatform.supportsCellScanning
-          ? _cell.tacChangesPerMinute() : 0,
-      neighborInstabilityScore: LBPlatform.supportsCellScanning
-          ? _cell.neighborInstabilityScore() : 0,
-    );
-    if (threats.isNotEmpty) {
-      await _alerts.handleThreatEvents(threats);
-    }
-
-    // Broadcast to UI
-    if (!_signalCtrl.isClosed) {
-      _signalCtrl.add(geotagged);
-    }
-    } finally {
-      _processingSignals = false;
-    }
-  }
-
+  
   void setOpsecAutoEnabled(bool enabled) {
     _alerts.opsecAutoEnabled = enabled;
   }
-
+  
   OpsecController get opsec => _opsec;
-
+  
   void dispose() {
     stopScan();
     _wifi.dispose();
@@ -327,6 +445,11 @@ class ScanCoordinator {
     }
     _gps.dispose();
     _alerts.dispose();
+    _shell.dispose();
+    _mqtt.dispose();
+    if (Platform.isLinux) {
+      _btClassic.dispose();
+    }
     _signalCtrl.close();
   }
 }

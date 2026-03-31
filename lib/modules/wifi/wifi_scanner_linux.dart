@@ -21,26 +21,32 @@ class WifiScanner {
 
   Future<void> start(String sessionId, {bool foreground = true}) async {
     if (isRunning) return;
+    stderr.write('LB_WIFI: starting scan session=$sessionId\n');
     await _scan(sessionId);
     final interval = foreground
         ? LBScanInterval.wifiForegroundMs
         : LBScanInterval.wifiBackgroundMs;
     _timer = Timer.periodic(Duration(milliseconds: interval), (_) => _scan(sessionId));
+    stderr.write('LB_WIFI: scan started, interval=${interval}ms\n');
   }
 
   Future<void> stop() async {
+    stderr.write('LB_WIFI: stopping scan\n');
     _timer?.cancel();
     _timer = null;
   }
 
   Future<void> _scan(String sessionId) async {
     try {
+      stderr.write('LB_WIFI: running nmcli scan\n');
       final result = await Process.run('nmcli', ['-t', '-f', 'SSID,BSSID,SIGNAL,CHAN,FREQ,SECURITY', 'device', 'wifi', 'list']);
       if (result.exitCode != 0) {
+        stderr.write('LB_WIFI: nmcli failed: ${result.stderr}\n');
         debugPrint('LB_WIFI nmcli failed: ${result.stderr}');
         return;
       }
       final lines = (result.stdout as String).split('\n').where((l) => l.isNotEmpty).toList();
+      stderr.write('LB_WIFI: nmcli found ${lines.length} networks\n');
       debugPrint('LB_WIFI nmcli: ${lines.length} networks');
       if (lines.isEmpty) return;
       final now = DateTime.now();
@@ -58,8 +64,12 @@ class WifiScanner {
         final ap = _NmcliAccessPoint(ssid: ssid, bssid: bssid, signal: signal, channel: channel, freq: freq, security: security);
         signals.add(_normalize(ap, sessionId, now));
       }
-      if (!_controller.isClosed) _controller.add(signals);
+      if (!_controller.isClosed) {
+        _controller.add(signals);
+        stderr.write('LB_WIFI: emitting ${signals.length} wifi signals\n');
+      }
     } catch (e) {
+      stderr.write('LB_WIFI: scan error: $e\n');
       debugPrint('LB_WIFI scan error: $e');
     }
   }

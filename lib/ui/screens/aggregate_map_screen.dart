@@ -27,6 +27,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   String? _error;
   bool _loadRunning = false;
   Timer? _debounceTimer;
+  String? _gpsStatus;
 
   MapLayer _layer = MapLayer.grid;
   bool _includeNeighbors = false;
@@ -53,6 +54,16 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   @override
   void initState() {
     super.initState();
+    _initDbAndLoad();
+  }
+
+  Future<void> _initDbAndLoad() async {
+    // Migrate any existing observations that might be missing geohash
+    try {
+      await _db.migrateGeohashForExistingObservations();
+    } catch (e) {
+      debugPrint('AggregateMap: geohash migration error (non-fatal): $e');
+    }
     _load();
   }
 
@@ -79,11 +90,22 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
         );
         final cells = raw.map((m) => AggregateCell.fromMap(m, precision: _precision.chars)).toList();
         final maxObs = cells.isEmpty ? 1 : cells.map((c) => c.observationCount).reduce(math.max);
+        
+        // Get GPS and observation stats for debugging
+        final gpsStatus = await _db.getGpsStatus();
+        final obsStats = await _db.getObservationStats();
+        final waypointCount = await _db.getWaypointCount();
+        final gpsStatusStr = gpsStatus['hasFreshFix'] == true 
+            ? 'GPS: ✓ lat=${gpsStatus['lastPosition']?['lat']?.toStringAsFixed(4)}, lon=${gpsStatus['lastPosition']?['lon']?.toStringAsFixed(4)}'
+            : 'GPS: ✗ running=${gpsStatus['isRunning']}, freshFix=${gpsStatus['hasFreshFix']}, error=${gpsStatus['lastError']}';
+        final obsStatusStr = 'Data: ${obsStats['total']} obs, ${obsStats['withLatLon']} geo, $waypointCount waypoints, ${obsStats['gridCells']} cells';
+        
         if (mounted) {
           setState(() {
             _gridCells = cells;
             _maxObs = maxObs;
             _loading = false;
+            _gpsStatus = '$gpsStatusStr\n$obsStatusStr';
           });
         }
       } else if (_layer == MapLayer.towers) {
@@ -332,6 +354,14 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
               ],
             ),
           ),
+          if (kDebugMode && _gpsStatus != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _gpsStatus!,
+                style: LBTextStyles.label.copyWith(fontSize: 8, color: LBColors.dimText),
+              ),
+            ),
           if (_layer == MapLayer.grid && _gridCells.isNotEmpty ||
               _layer == MapLayer.towers && _towers.isNotEmpty)
             Padding(
@@ -498,6 +528,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
         onTap: (_, __) => _dismissSheet(),
       ),
       children: [
+        // OpenStreetMap - primary tile provider (free, no API key)
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'art.n0v4.littlebrother',

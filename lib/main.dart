@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 import 'package:littlebrother/core/scan_coordinator.dart';
 import 'package:littlebrother/ui/radar/radar_screen.dart';
@@ -27,7 +28,39 @@ void main() async {
     systemNavigationBarIconBrightness: Brightness.light,
   ));
 
+  // Initialize database and run migrations
+  try {
+    await LBDatabase.instance.db;
+    debugPrint('LB_MAIN: Database initialized');
+    
+    // Run automatic waypoints migration if needed
+    await _runWaypointsMigration();
+  } catch (e) {
+    debugPrint('LB_MAIN: Database init error: $e');
+  }
+
   runApp(const LittleBrotherApp());
+}
+
+Future<void> _runWaypointsMigration() async {
+  try {
+    final waypointCount = await LBDatabase.instance.getWaypointCount();
+    debugPrint('LB_MAIN: Current waypoint count: $waypointCount');
+    
+    if (waypointCount == 0) {
+      debugPrint('LB_MAIN: Running waypoints migration...');
+      await LBDatabase.instance.migrateObservationsToWaypoints();
+      
+      final newCount = await LBDatabase.instance.getWaypointCount();
+      debugPrint('LB_MAIN: Migration complete - $newCount waypoints created');
+      
+      // Also cleanup observations without location
+      await LBDatabase.instance.cleanupObservationsWithoutLocation();
+      debugPrint('LB_MAIN: Cleanup complete');
+    }
+  } catch (e) {
+    debugPrint('LB_MAIN: Migration error: $e');
+  }
 }
 
 class LittleBrotherApp extends StatelessWidget {

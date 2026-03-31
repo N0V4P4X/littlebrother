@@ -94,7 +94,9 @@ class CellScanner {
       try {
         final capsRaw = await _channel.invokeMethod('getCellCapabilities');
         if (capsRaw != null) {
-          _lastCapabilities = CellCapabilities.fromMap(Map<String, dynamic>.from(capsRaw as Map));
+          _lastCapabilities = CellCapabilities.fromMap(
+            Map<String, dynamic>.from(capsRaw as Map<Object?, Object?>)
+          );
         }
       } catch (e) {
         debugPrint('LB_CELL getCellCapabilities error: $e');
@@ -102,8 +104,11 @@ class CellScanner {
 
       final List<dynamic> rawCells =
           await _channel.invokeMethod('getAllCellInfo') as List<dynamic>;
-      final Map<String, dynamic> serviceState =
-          await _channel.invokeMethod('getServiceState') as Map<String, dynamic>;
+      final serviceStateRaw = await _channel.invokeMethod('getServiceState');
+      final Map<String, dynamic> serviceState = 
+          serviceStateRaw != null 
+              ? Map<String, dynamic>.from(serviceStateRaw as Map<Object?, Object?>)
+              : <String, dynamic>{};
 
       debugPrint('LB_CELL raw cells: ${rawCells.length}, networkType=${serviceState['networkTypeName']}');
 
@@ -119,9 +124,13 @@ class CellScanner {
       final signals = <LBSignal>[];
 
       for (final raw in rawCells) {
-        final cell = Map<String, dynamic>.from(raw as Map<Object?, Object?>);
-        final signal = _normalize(cell, sessionId, now, serviceState);
-        if (signal != null) signals.add(signal);
+        try {
+          final cell = Map<String, dynamic>.from(raw as Map<Object?, Object?>);
+          final signal = _normalize(cell, sessionId, now, serviceState);
+          if (signal != null) signals.add(signal);
+        } catch (e) {
+          debugPrint('LB_CELL cell parse error: $e');
+        }
       }
 
       debugPrint('LB_CELL normalized ${signals.length} signals');

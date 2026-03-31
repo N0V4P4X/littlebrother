@@ -9,13 +9,14 @@ class LBChannels {
 
 class LBDb {
   static const name            = 'littlebrother.db';
-  static const version         = 3;
+  static const version         = 4;
   static const tObservations   = 'observations';
   static const tKnownDevices   = 'known_devices';
   static const tCellBaseline   = 'cell_baseline';
   static const tThreatEvents   = 'threat_events';
   static const tSessions       = 'sessions';
   static const tAggregateCells = 'aggregate_cells';
+  static const tDeviceWaypoints = 'device_waypoints';
 }
 
 class LBSignalType {
