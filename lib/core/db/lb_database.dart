@@ -792,6 +792,7 @@ class LBDatabase {
            OR (o.geohash IS NOT NULL)
            OR (o.metadata_json LIKE '%geohash%')
         GROUP BY p, geohash
+        HAVING geohash IS NOT NULL
       ''');
     });
     

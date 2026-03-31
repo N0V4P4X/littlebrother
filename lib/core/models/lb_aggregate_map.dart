@@ -30,9 +30,11 @@ class AggregateCell {
   });
 
   factory AggregateCell.fromMap(Map<String, dynamic> m, {int precision = LBGeohash.precisionLevel}) {
-    final gh = Geohash.decode(m['geohash'] as String);
+    final geohashVal = m['geohash'];
+    final geohashStr = geohashVal is String ? geohashVal : (geohashVal?.toString() ?? '');
+    final gh = Geohash.decode(geohashStr);
     return AggregateCell(
-      geohash:          m['geohash'] as String,
+      geohash:          geohashStr,
       precision:        precision,
       lat:              gh.lat,
       lon:              gh.lon,
@@ -42,7 +44,7 @@ class AggregateCell {
       wifiCount:        m['wifi_count'] as int? ?? 0,
       bleCount:         m['ble_count'] as int? ?? 0,
       cellCount:        m['cell_count'] as int? ?? 0,
-      mostRecent:       DateTime.fromMillisecondsSinceEpoch(m['most_recent'] as int),
+      mostRecent:       DateTime.fromMillisecondsSinceEpoch((m['most_recent'] as num?)?.toInt() ?? 0),
     );
   }
 
@@ -356,18 +358,18 @@ class WifiDevice {
 
   factory WifiDevice.fromMap(Map<String, dynamic> m) {
     return WifiDevice(
-      bssid:            m['bssid'] as String,
-      ssid:             m['ssid'] as String? ?? '',
-      vendor:           m['vendor'] as String? ?? '',
-      position:         LatLng(m['lat'] as double, m['lon'] as double),
-      observationCount: m['obs_count'] as int? ?? 1,
+      bssid:            (m['bssid'] as String?) ?? '',
+      ssid:             (m['ssid'] as String?) ?? '',
+      vendor:           (m['vendor'] as String?) ?? '',
+      position:         LatLng((m['lat'] as num?)?.toDouble() ?? 0.0, (m['lon'] as num?)?.toDouble() ?? 0.0),
+      observationCount: (m['obs_count'] as num?)?.toInt() ?? 1,
       worstThreat:     (m['max_severity'] as num?)?.toInt() ?? 0,
       worstThreatFlag: (m['worst_flag'] as num?)?.toInt() ?? LBThreatFlag.clean,
-      rssi:            m['rssi'] as int? ?? -100,
+      rssi:            (m['rssi'] as num?)?.toInt() ?? -100,
       channel:         (m['channel'] as num?)?.toInt(),
       security:        m['security'] as String?,
-      firstSeen:       DateTime.fromMillisecondsSinceEpoch(m['first_seen'] as int),
-      lastSeen:        DateTime.fromMillisecondsSinceEpoch(m['last_seen'] as int),
+      firstSeen:       DateTime.fromMillisecondsSinceEpoch((m['first_seen'] as num?)?.toInt() ?? 0),
+      lastSeen:        DateTime.fromMillisecondsSinceEpoch((m['last_seen'] as num?)?.toInt() ?? 0),
     );
   }
 
@@ -409,17 +411,17 @@ class BleDevice {
 
   factory BleDevice.fromMap(Map<String, dynamic> m) {
     return BleDevice(
-      mac:             m['mac'] as String,
-      displayName:     m['display_name'] as String? ?? '',
-      position:        LatLng(m['lat'] as double, m['lon'] as double),
-      observationCount: m['obs_count'] as int? ?? 1,
+      mac:             (m['mac'] as String?) ?? '',
+      displayName:     (m['display_name'] as String?) ?? '',
+      position:        LatLng((m['lat'] as num?)?.toDouble() ?? 0.0, (m['lon'] as num?)?.toDouble() ?? 0.0),
+      observationCount: (m['obs_count'] as num?)?.toInt() ?? 1,
       worstThreat:     (m['max_severity'] as num?)?.toInt() ?? 0,
       worstThreatFlag: (m['worst_flag'] as num?)?.toInt() ?? LBThreatFlag.clean,
-      rssi:            m['rssi'] as int? ?? -100,
+      rssi:            (m['rssi'] as num?)?.toInt() ?? -100,
       isTracker:      (m['is_tracker'] as num?)?.toInt() == 1,
       txPower:        (m['tx_power'] as num?)?.toInt(),
-      firstSeen:       DateTime.fromMillisecondsSinceEpoch(m['first_seen'] as int),
-      lastSeen:        DateTime.fromMillisecondsSinceEpoch(m['last_seen'] as int),
+      firstSeen:       DateTime.fromMillisecondsSinceEpoch((m['first_seen'] as num?)?.toInt() ?? 0),
+      lastSeen:        DateTime.fromMillisecondsSinceEpoch((m['last_seen'] as num?)?.toInt() ?? 0),
     );
   }
 
