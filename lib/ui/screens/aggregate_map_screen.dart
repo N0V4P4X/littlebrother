@@ -461,6 +461,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                         showLocationButton: _currentLocation != null,
                         currentLocation: _currentLocation,
                         tileProviderIndex: _tileProviderIndex,
+                        enableClustering: _layer != MapLayer.grid,
+                        clusterZoomThreshold: 15,
                       ),
           ),
         ],

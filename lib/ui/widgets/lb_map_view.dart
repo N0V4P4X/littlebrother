@@ -17,6 +17,8 @@ class LBMapView extends StatefulWidget {
   final LatLng? currentLocation;
   final MapController? mapController;
   final int tileProviderIndex;
+  final bool enableClustering;
+  final int clusterZoomThreshold;
 
   const LBMapView({
     super.key,
@@ -32,6 +34,8 @@ class LBMapView extends StatefulWidget {
     this.currentLocation,
     this.mapController,
     this.tileProviderIndex = 1,
+    this.enableClustering = false,
+    this.clusterZoomThreshold = 15,
   });
 
   @override
@@ -168,7 +172,7 @@ class _LBMapViewState extends State<LBMapView> {
                   PolygonLayer(
                     polygons: _buildGridPolygons(),
                   ),
-                MarkerLayer(markers: widget.markers),
+                MarkerLayer(markers: widget.enableClustering ? _buildClusteredMarkers() : widget.markers),
               ],
             ),
           ),
@@ -394,6 +398,72 @@ class _LBMapViewState extends State<LBMapView> {
       lat: (bounds['minLat']! + bounds['maxLat']!) / 2,
       lon: (bounds['minLon']! + bounds['maxLon']!) / 2,
     );
+  }
+
+  List<Marker> _buildClusteredMarkers() {
+    if (!widget.enableClustering || widget.markers.isEmpty) {
+      return widget.markers;
+    }
+
+    final zoom = _mapController.camera.zoom;
+    final useClusters = zoom < widget.clusterZoomThreshold;
+
+    if (!useClusters) {
+      return widget.markers;
+    }
+
+    // Grid-based clustering
+    final clusterRadius = 0.002; // ~200m at mid latitudes
+    final clusters = <String, List<Marker>>{};
+    final clustered = <Marker>[];
+
+    for (final marker in widget.markers) {
+      final key = '${(marker.point.latitude / clusterRadius).floor()}_${(marker.point.longitude / clusterRadius).floor()}';
+      clusters.putIfAbsent(key, () => []).add(marker);
+    }
+
+    for (final entry in clusters.entries) {
+      final markersInCluster = entry.value;
+      if (markersInCluster.length == 1) {
+        clustered.add(markersInCluster.first);
+      } else {
+        // Create cluster marker
+        final centerLat = markersInCluster.map((m) => m.point.latitude).reduce((a, b) => a + b) / markersInCluster.length;
+        final centerLon = markersInCluster.map((m) => m.point.longitude).reduce((a, b) => a + b) / markersInCluster.length;
+        final count = markersInCluster.length;
+
+        clustered.add(Marker(
+          point: LatLng(centerLat, centerLon),
+          width: 40,
+          height: 40,
+          child: GestureDetector(
+            onTap: () {
+              // Zoom in to show individual markers
+              _mapController.move(LatLng(centerLat, centerLon), zoom + 2);
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF00D9FF).withValues(alpha: 0.8),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Center(
+                child: Text(
+                  count > 99 ? '99+' : '$count',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ));
+      }
+    }
+
+    return clustered;
   }
 
   void moveTo(LatLng point, {double? zoom}) {
