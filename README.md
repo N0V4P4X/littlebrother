@@ -2,7 +2,7 @@
 
 Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · Evasion Automation
 
-Version: 0.5.1 (2026-03-31)
+Version: 0.6.0 (2026-04-01)
 
 > **Platform**: Android primary · Linux desktop · iOS/macOS/Windows planned
 
@@ -69,6 +69,21 @@ Flipper Zero supports sub-GHz RF reception, NFC, IR, and iButton reading. Little
 - **Sub-GHz RX**: Capture and replay 433 MHz and other sub-GHz signals
 - **Flipper as SDR bridge**: Use Flipper as a front-end for the LittleBrother app (connect via Bluetooth Serial or USB CDC)
 - **Combined session data**: Merge Flipper captures with phone-native WiFi/BLE/Cell data in a unified intel database
+
+### Map Features (v0.6.0+)
+
+- **Geohash Grid Overlay**: Density-based colored cells showing device concentration
+  - Color by dominant type: WiFi (cyan), BLE (coral), Cell (orange)
+  - Opacity scales with observation count (15% - 75%)
+  - Threat borders: Clean (green), Watch (yellow), Hostile (red)
+- **Precision Selector**: Switch between 6 (1km), 7 (150m), 8 (38m) char precision
+- **Dynamic Precision**: Auto-adjusts based on zoom level (in progress)
+- **Marker Clustering**: Deflock-style clusters for dense areas
+  - Tap cluster to zoom in and reveal individual markers
+  - Count badge shows device count
+- **Privacy Mode**: Reduces visibility at high precision (6+ chars)
+- **Multiple Tile Providers**: OSM, CartoDB Voyager, CartoDB Dark, OpenTopoMap
+- **Legend Overlay**: Shows color key for threat levels and device types
 
 ---
 

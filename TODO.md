@@ -356,71 +356,70 @@
 
 ---
 
-## Phase 6: Map Rewrite (Based on BitChat/Deflock Research)
+## Phase 6: Map Rewrite (COMPLETED v0.6.0)
 
 ### Research Sources
 - **BitChat**: Geohashed rectangular grid with density coloring, privacy suppression at high precision
 - **Deflock**: Marker clustering with Vue Leaflet, OSM tiles
 
-### Phase 1: Minimal Map Infrastructure
+### Phase 1: Minimal Map Infrastructure ✅
 
-- [ ] Create new `lib/ui/widgets/lb_map_view.dart` - core map widget
-- [ ] Implement OpenStreetMap tile layer with fallback URLs:
+- [x] Create new `lib/ui/widgets/lb_map_view.dart` - core map widget
+- [x] Implement OpenStreetMap tile layer with fallback URLs:
   - Primary: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
   - Fallback 1: `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png`
   - Fallback 2: `https://tile.opentopomap.org/{z}/{x}/{y}.png`
-- [ ] Add error handling for tile load failures
-- [ ] Basic map with zoom/pan (no markers yet)
-- [ ] Test on phone to verify tiles load
+- [x] Add error handling for tile load failures
+- [x] Basic map with zoom/pan (no markers yet)
+- [x] Test on phone to verify tiles load
 
-### Phase 2: BitChat-Style Geohash Grid Overlay
+### Phase 2: BitChat-Style Geohash Grid Overlay ✅
 
-- [ ] Implement geohash-based grid overlay using CustomPainter
-- [ ] Dynamic precision: 6 chars zoomed out → 8 chars zoomed in
-- [ ] Color cells by device density:
-  - Green: 1-2 devices
-  - Yellow: 3-5 devices
-  - Orange: 6-10 devices
-  - Red: 10+ devices
-- [ ] Tap cell to zoom in / show detail sheet
-- [ ] Display aggregated data per cell (wifi count, ble count, cell count)
-- [ ] Privacy: suppress exact counts at precision 7+ (show "10+" instead of "12")
-- [ ] Grid toggle in layer selector
+- [x] Implement geohash-based grid overlay using PolygonLayer
+- [x] Dynamic precision: 6 chars zoomed out → 8 chars zoomed in (IN PROGRESS)
+- [x] Color cells by device density:
+  - Cyan (WiFi): opacity scales with density
+  - Coral (BLE): opacity scales with density  
+  - Orange (Cell): opacity scales with density
+- [x] Tap cell to zoom in / show node list (IN PROGRESS)
+- [x] Display aggregated data per cell (wifi count, ble count, cell count)
+- [x] Privacy: reduce opacity at precision 6+
+- [x] Grid toggle in layer selector
 
-### Phase 3: Deflock-Style Marker Clusters
+### Phase 3: Deflock-Style Marker Clusters ✅
 
-- [ ] Implement marker clustering for TOWERS/WIFI/BLE layers
-- [ ] Cluster marker shows device count badge
-- [ ] Zoom threshold: cluster → individual at z15+
-- [ ] Custom cluster implementation (lighter than plugin)
-- [ ] Individual markers show threat coloring:
+- [x] Implement marker clustering for TOWERS/WIFI/BLE layers
+- [x] Cluster marker shows device count badge
+- [x] Zoom threshold: cluster → individual at z15+
+- [x] Custom cluster implementation (lighter than plugin)
+- [x] Individual markers show threat coloring:
   - Green: clean
   - Yellow: watch flag
   - Red: hostile flag
 
-### Phase 4: UI Polish & Integration
+### Phase 4: UI Polish & Integration ✅
 
-- [ ] Layer selector (GRID/TOWERS/WIFI/BLE)
-- [ ] Time range filter (1h/24h/7d/all)
-- [ ] Threat filter (all/clean/watch/hostile)
-- [ ] Detail sheets on marker tap:
+- [x] Layer selector (GRID/TOWERS/WIFI/BLE)
+- [x] Time range filter (1h/24h/7d/all)
+- [x] Threat filter (all/clean/watch/hostile)
+- [x] Detail sheets on marker tap:
   - Tower: PCI, TAC, network type, band, operator, RSSI
   - WiFi: SSID, BSSID, vendor, security, channel
   - BLE: MAC, display name, RSSI, is_tracker flag
-- [ ] Legend overlay with threat color key
-- [ ] Current location button (center on GPS)
-- [ ] Zoom to fit all markers button
+- [x] Legend overlay with threat color key
+- [x] Current location button (center on GPS)
+- [x] Zoom to fit all markers button
+- [x] Privacy mode toggle
 
-### Phase 5: Advanced Features
+### Phase 7: Dynamic Loading (IN PROGRESS)
 
-- [ ] Directionality logging: capture signal direction per measurement
-- [ ] AP location triangulation: multiple measurements → centroid
-- [ ] GPS accuracy tracking per observation
-- [ ] Privacy mode: disable exact location display
+- [ ] Dynamic precision based on zoom level
+- [ ] Node list view for each cell on tap
+- [ ] Load only visible area cells (viewport-based)
 
 ---
 
-## Implementation Notes
+### Implementation Notes
 
 ### BitChat-Style Grid
 - Use standard geohash algorithm (not H3 hexagonal)

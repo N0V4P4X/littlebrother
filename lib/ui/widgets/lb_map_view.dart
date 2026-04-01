@@ -21,6 +21,9 @@ class LBMapView extends StatefulWidget {
   final int clusterZoomThreshold;
   final bool privacyMode;
   final VoidCallback? onPrivacyToggle;
+  final bool autoPrecision;
+  final Function(int)? onPrecisionChanged;
+  final Function(int)? onZoomChanged;
 
   const LBMapView({
     super.key,
@@ -40,6 +43,9 @@ class LBMapView extends StatefulWidget {
     this.clusterZoomThreshold = 15,
     this.privacyMode = false,
     this.onPrivacyToggle,
+    this.autoPrecision = true,
+    this.onPrecisionChanged,
+    this.onZoomChanged,
   });
 
   @override
@@ -52,6 +58,7 @@ class _LBMapViewState extends State<LBMapView> {
   int _errorCount = 0;
   bool _tilesLoaded = false;
   bool _loadingTiles = true;
+  int _currentPrecision = 7;
 
   static const _tileProviders = [
     ('OpenStreetMap', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
@@ -157,6 +164,16 @@ class _LBMapViewState extends State<LBMapView> {
                   if (hasGesture && widget.onPositionChanged != null) {
                     widget.onPositionChanged!(position.center, position.zoom);
                   }
+                  // Auto-precision: calculate precision from zoom
+                  if (widget.autoPrecision) {
+                    final newPrecision = _calcPrecisionFromZoom(position.zoom);
+                    if (newPrecision != _currentPrecision) {
+                      _currentPrecision = newPrecision;
+                      widget.onPrecisionChanged?.call(newPrecision);
+                    }
+                  }
+                  // Notify zoom changes
+                  widget.onZoomChanged?.call(position.zoom.toInt());
                 },
                 onMapReady: () {
                   debugPrint('LBMapView: map ready');
@@ -448,6 +465,19 @@ class _LBMapViewState extends State<LBMapView> {
     );
   }
 
+  AggregateCell? _findCellAtPoint(LatLng point) {
+    for (final cell in widget.gridCells) {
+      final bounds = _geohashBounds(cell.geohash);
+      if (point.latitude >= bounds['minLat']! &&
+          point.latitude <= bounds['maxLat']! &&
+          point.longitude >= bounds['minLon']! &&
+          point.longitude <= bounds['maxLon']!) {
+        return cell;
+      }
+    }
+    return null;
+  }
+
   List<Marker> _buildClusteredMarkers() {
     if (!widget.enableClustering || widget.markers.isEmpty) {
       return widget.markers;
@@ -532,5 +562,17 @@ class _LBMapViewState extends State<LBMapView> {
 
   void zoomOut() {
     _mapController.move(_mapController.camera.center, _mapController.camera.zoom - 1);
+  }
+
+  int _calcPrecisionFromZoom(double zoom) {
+    // Dynamic precision based on zoom level (BitChat-style)
+    // Zoom < 10: precision 5 (city, ~5km)
+    // Zoom 10-12: precision 6 (neighborhood, ~1km)
+    // Zoom 13-15: precision 7 (block, ~150m)
+    // Zoom > 15: precision 8 (building, ~38m)
+    if (zoom < 10) return 5;
+    if (zoom < 13) return 6;
+    if (zoom < 16) return 7;
+    return 8;
   }
 }

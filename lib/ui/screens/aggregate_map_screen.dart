@@ -400,6 +400,85 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
     );
   }
 
+  void _showCellDetail(AggregateCell cell) {
+    // Zoom into the cell and show details
+    _mapController.move(LatLng(cell.lat, cell.lon), 17);
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: LBColors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.5,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, scrollController) => Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Geohash: ${cell.geohash}', style: LBTextStyles.heading),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text('Position: ${cell.lat.toStringAsFixed(5)}, ${cell.lon.toStringAsFixed(5)}', style: LBTextStyles.label),
+              const SizedBox(height: 16),
+              Text('Device Count: ${cell.deviceCount}', style: LBTextStyles.body),
+              Text('Observations: ${cell.observationCount}', style: LBTextStyles.body),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _buildTypeChip('WiFi', cell.wifiCount, const Color(0xFF00D9FF)),
+                  const SizedBox(width: 8),
+                  _buildTypeChip('BLE', cell.bleCount, const Color(0xFFFF6B6B)),
+                  const SizedBox(width: 8),
+                  _buildTypeChip('Cell', cell.cellCount, const Color(0xFFFFB347)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text('Most Recent: ${_formatDate(cell.mostRecent)}', style: LBTextStyles.label),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypeChip(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.2),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(width: 4),
+          Text('$count', style: TextStyle(color: color, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+
   void _fitAllMarkers() {
     final markers = _getMarkers();
     if (markers.isEmpty) return;
@@ -466,6 +545,17 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                         clusterZoomThreshold: 15,
                         privacyMode: _privacyMode,
                         onPrivacyToggle: () => setState(() => _privacyMode = !_privacyMode),
+                        autoPrecision: _layer == MapLayer.grid,
+                        onPrecisionChanged: (precision) {
+                          if (_layer == MapLayer.grid && precision != _gridPrecision) {
+                            setState(() => _gridPrecision = precision);
+                            _load();
+                          }
+                        },
+                        onZoomChanged: (zoom) {
+                          debugPrint('Map zoom: $zoom');
+                        },
+                        onCellTap: _layer == MapLayer.grid ? (cell) => _showCellDetail(cell) : null,
                       ),
           ),
         ],
