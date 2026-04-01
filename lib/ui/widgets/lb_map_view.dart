@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/models/lb_aggregate_map.dart';
 
 class LBMapView extends StatefulWidget {
   final LatLng? initialCenter;
   final double initialZoom;
   final List<Marker> markers;
+  final List<AggregateCell> gridCells;
+  final int gridPrecision;
   final Function(LatLng)? onTap;
+  final Function(AggregateCell)? onCellTap;
   final Function(LatLng, double)? onPositionChanged;
   final bool showLocationButton;
   final LatLng? currentLocation;
@@ -18,7 +23,10 @@ class LBMapView extends StatefulWidget {
     this.initialCenter,
     this.initialZoom = 14.0,
     this.markers = const [],
+    this.gridCells = const [],
+    this.gridPrecision = 7,
     this.onTap,
+    this.onCellTap,
     this.onPositionChanged,
     this.showLocationButton = false,
     this.currentLocation,
@@ -156,6 +164,10 @@ class _LBMapViewState extends State<LBMapView> {
                   errorTileCallback: _onTileError,
                   maxZoom: 19,
                 ),
+                if (widget.gridCells.isNotEmpty)
+                  PolygonLayer(
+                    polygons: _buildGridPolygons(),
+                  ),
                 MarkerLayer(markers: widget.markers),
               ],
             ),
@@ -280,9 +292,107 @@ class _LBMapViewState extends State<LBMapView> {
                 backgroundColor: const Color(0xFF1E1E2E),
                 child: const Icon(Icons.fit_screen, color: Color(0xFF00D9FF)),
               ),
-            ),
+              ),
         ],
       ),
+    );
+  }
+
+  List<Polygon> _buildGridPolygons() {
+    final cells = widget.gridCells;
+    if (cells.isEmpty) return [];
+
+    int maxObs = 1;
+    for (final cell in cells) {
+      if (cell.observationCount > maxObs) maxObs = cell.observationCount;
+    }
+
+    return cells.map((cell) {
+      final density = cell.observationCount / maxObs;
+      final alpha = (0.15 + density * 0.6).clamp(0.15, 0.75);
+      final fillColor = _cellFillColor(cell.dominantType, alpha);
+      final borderColor = _threatBorderColor(cell.worstFlag);
+
+      // Get polygon points from geohash bounds
+      final points = _geohashToPolygon(cell.geohash);
+
+      return Polygon(
+        points: points,
+        color: fillColor,
+        borderColor: borderColor,
+        borderStrokeWidth: cell.worstFlag > 0 ? 2.0 : 1.0,
+      );
+    }).toList();
+  }
+
+  Color _cellFillColor(String dominantType, double alpha) {
+    final baseColor = switch (dominantType) {
+      LBSignalType.wifi => const Color(0xFF00D9FF),  // cyan
+      LBSignalType.ble  => const Color(0xFFFF6B6B), // coral
+      _                  => const Color(0xFFFFB347), // orange
+    };
+    return baseColor.withValues(alpha: alpha);
+  }
+
+  Color _threatBorderColor(int flag) {
+    return switch (flag) {
+      LBThreatFlag.watch   => const Color(0xFFFFD93D),   // yellow
+      LBThreatFlag.hostile => const Color(0xFFFF4757), // red
+      _                    => const Color(0xFF00FF88), // green
+    };
+  }
+
+  List<LatLng> _geohashToPolygon(String geohash) {
+    // Decode geohash to get center, then compute bounds
+    final decoded = _decodeGeohash(geohash);
+    final bounds = _geohashBounds(geohash);
+    
+    // Return 4 corners of the geohash cell
+    return [
+      LatLng(bounds['minLat']!, bounds['minLon']!),
+      LatLng(bounds['maxLat']!, bounds['minLon']!),
+      LatLng(bounds['maxLat']!, bounds['maxLon']!),
+      LatLng(bounds['minLat']!, bounds['maxLon']!),
+    ];
+  }
+
+  Map<String, double> _geohashBounds(String geohash) {
+    // Standard geohash decode
+    const base32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+    var minLat = -90.0, maxLat = 90.0;
+    var minLon = -180.0, maxLon = 180.0;
+    var isEven = true;
+
+    for (final ch in geohash.split('')) {
+      final idx = base32.indexOf(ch.toLowerCase());
+      if (idx == -1) break;
+      
+      for (var bits = 4; bits >= 0; bits--) {
+        final bitVal = (idx >> bits) & 1;
+        if (isEven) {
+          final mid = (minLon + maxLon) / 2;
+          if (bitVal == 1) { minLon = mid; } else { maxLon = mid; }
+        } else {
+          final mid = (minLat + maxLat) / 2;
+          if (bitVal == 1) { minLat = mid; } else { maxLat = mid; }
+        }
+        isEven = !isEven;
+      }
+    }
+
+    return {
+      'minLat': minLat,
+      'maxLat': maxLat,
+      'minLon': minLon,
+      'maxLon': maxLon,
+    };
+  }
+
+  ({double lat, double lon}) _decodeGeohash(String geohash) {
+    final bounds = _geohashBounds(geohash);
+    return (
+      lat: (bounds['minLat']! + bounds['maxLat']!) / 2,
+      lon: (bounds['minLon']! + bounds['maxLon']!) / 2,
     );
   }
 

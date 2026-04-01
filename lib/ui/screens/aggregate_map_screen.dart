@@ -27,6 +27,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   TimeRange _timeRange = TimeRange.all;
   ThreatFilter _threatFilter = ThreatFilter.all;
   int _tileProviderIndex = 1; // Default to CartoDB Voyager
+  int _gridPrecision = 7; // Default precision (150m)
 
   List<AggregateCell> _gridCells = [];
   List<CellTower> _towers = [];
@@ -83,14 +84,14 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       final sinceMs = _timeRange.cutoffMs;
 
       if (_layer == MapLayer.grid) {
-        await _db.rebuildAggregateCells(precision: 7);
+        await _db.rebuildAggregateCells(precision: _gridPrecision);
         final cells = await _db.getAggregateCells(
-          precision: 7,
+          precision: _gridPrecision,
           minThreatFlag: _threatFilter.minFlag,
           sinceMs: sinceMs,
           limit: 200,
         );
-        final cellObjects = cells.map((m) => AggregateCell.fromMap(m, precision: 7)).toList();
+        final cellObjects = cells.map((m) => AggregateCell.fromMap(m, precision: _gridPrecision)).toList();
         final maxObs = cells.isEmpty ? 1 : cells.map((c) => c['obs_count'] as int? ?? 1).reduce((a, b) => a > b ? a : b);
         setState(() {
           _gridCells = cellObjects;
@@ -157,6 +158,13 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   }
 
   void _onFilterChange() {
+    _load();
+  }
+
+  void _changePrecision(int precision) {
+    setState(() {
+      _gridPrecision = precision;
+    });
     _load();
   }
 
@@ -448,6 +456,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                         initialCenter: _getMapCenter(),
                         initialZoom: 14,
                         markers: _getMarkers(),
+                        gridCells: _gridCells,
+                        gridPrecision: _gridPrecision,
                         showLocationButton: _currentLocation != null,
                         currentLocation: _currentLocation,
                         tileProviderIndex: _tileProviderIndex,
@@ -504,6 +514,14 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                 }),
               ),
             )),
+            if (_layer == MapLayer.grid) ...[
+              const SizedBox(width: 12),
+              _buildLabel('GRID'),
+              const SizedBox(width: 4),
+              _buildChip(label: '7 (150m)', selected: _gridPrecision == 7, onTap: () => _changePrecision(7)),
+              _buildChip(label: '6 (1km)', selected: _gridPrecision == 6, onTap: () => _changePrecision(6)),
+              _buildChip(label: '8 (38m)', selected: _gridPrecision == 8, onTap: () => _changePrecision(8)),
+            ],
           ],
         ),
       ),
