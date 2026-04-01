@@ -19,6 +19,8 @@ class LBMapView extends StatefulWidget {
   final int tileProviderIndex;
   final bool enableClustering;
   final int clusterZoomThreshold;
+  final bool privacyMode;
+  final VoidCallback? onPrivacyToggle;
 
   const LBMapView({
     super.key,
@@ -36,6 +38,8 @@ class LBMapView extends StatefulWidget {
     this.tileProviderIndex = 1,
     this.enableClustering = false,
     this.clusterZoomThreshold = 15,
+    this.privacyMode = false,
+    this.onPrivacyToggle,
   });
 
   @override
@@ -296,7 +300,47 @@ class _LBMapViewState extends State<LBMapView> {
                 backgroundColor: const Color(0xFF1E1E2E),
                 child: const Icon(Icons.fit_screen, color: Color(0xFF00D9FF)),
               ),
+            ),
+          // Privacy toggle
+          if (widget.onPrivacyToggle != null)
+            Positioned(
+              right: 16,
+              bottom: 200,
+              child: FloatingActionButton.small(
+                heroTag: 'privacy',
+                onPressed: widget.onPrivacyToggle,
+                backgroundColor: widget.privacyMode 
+                    ? const Color(0xFFFF4757) 
+                    : const Color(0xFF1E1E2E),
+                child: Icon(
+                  widget.privacyMode ? Icons.visibility_off : Icons.visibility,
+                  color: Colors.white,
+                  size: 18,
+                ),
               ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendRow(Color color, String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.8),
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 1),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
         ],
       ),
     );
@@ -314,10 +358,15 @@ class _LBMapViewState extends State<LBMapView> {
     return cells.map((cell) {
       final density = cell.observationCount / maxObs;
       final alpha = (0.15 + density * 0.6).clamp(0.15, 0.75);
-      final fillColor = _cellFillColor(cell.dominantType, alpha);
+      
+      // Privacy mode: reduce opacity at high precision
+      final effectiveAlpha = widget.privacyMode && widget.gridPrecision >= 6 
+          ? alpha * 0.5 
+          : alpha;
+      
+      final fillColor = _cellFillColor(cell.dominantType, effectiveAlpha);
       final borderColor = _threatBorderColor(cell.worstFlag);
 
-      // Get polygon points from geohash bounds
       final points = _geohashToPolygon(cell.geohash);
 
       return Polygon(

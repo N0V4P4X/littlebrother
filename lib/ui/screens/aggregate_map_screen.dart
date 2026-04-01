@@ -28,6 +28,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   ThreatFilter _threatFilter = ThreatFilter.all;
   int _tileProviderIndex = 1; // Default to CartoDB Voyager
   int _gridPrecision = 7; // Default precision (150m)
+  bool _privacyMode = false;
 
   List<AggregateCell> _gridCells = [];
   List<CellTower> _towers = [];
@@ -463,6 +464,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                         tileProviderIndex: _tileProviderIndex,
                         enableClustering: _layer != MapLayer.grid,
                         clusterZoomThreshold: 15,
+                        privacyMode: _privacyMode,
+                        onPrivacyToggle: () => setState(() => _privacyMode = !_privacyMode),
                       ),
           ),
         ],
