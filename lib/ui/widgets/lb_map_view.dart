@@ -396,8 +396,7 @@ class _LBMapViewState extends State<LBMapView> {
   }
 
   List<LatLng> _geohashToPolygon(String geohash) {
-    // Decode geohash to get center, then compute bounds
-    final decoded = _decodeGeohash(geohash);
+    // Get geohash bounds
     final bounds = _geohashBounds(geohash);
     
     // Return 4 corners of the geohash cell
@@ -451,6 +450,14 @@ class _LBMapViewState extends State<LBMapView> {
 
   List<Marker> _buildClusteredMarkers() {
     if (!widget.enableClustering || widget.markers.isEmpty) {
+      return widget.markers;
+    }
+
+    // Check if map is ready - if not, return markers as-is
+    try {
+      final zoom = _mapController.camera.zoom;
+    } catch (e) {
+      // Map not ready yet, return unmapped markers
       return widget.markers;
     }
 
