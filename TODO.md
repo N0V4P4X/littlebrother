@@ -353,3 +353,91 @@
 | Round 4 | Gridded Map | 5 | 5 |
 | Round 5 | New Providers | 3 | 3 |
 | **Total** | | **43** | **43** |
+
+---
+
+## Phase 6: Map Rewrite (Based on BitChat/Deflock Research)
+
+### Research Sources
+- **BitChat**: Geohashed rectangular grid with density coloring, privacy suppression at high precision
+- **Deflock**: Marker clustering with Vue Leaflet, OSM tiles
+
+### Phase 1: Minimal Map Infrastructure
+
+- [ ] Create new `lib/ui/widgets/lb_map_view.dart` - core map widget
+- [ ] Implement OpenStreetMap tile layer with fallback URLs:
+  - Primary: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
+  - Fallback 1: `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png`
+  - Fallback 2: `https://tile.opentopomap.org/{z}/{x}/{y}.png`
+- [ ] Add error handling for tile load failures
+- [ ] Basic map with zoom/pan (no markers yet)
+- [ ] Test on phone to verify tiles load
+
+### Phase 2: BitChat-Style Geohash Grid Overlay
+
+- [ ] Implement geohash-based grid overlay using CustomPainter
+- [ ] Dynamic precision: 6 chars zoomed out → 8 chars zoomed in
+- [ ] Color cells by device density:
+  - Green: 1-2 devices
+  - Yellow: 3-5 devices
+  - Orange: 6-10 devices
+  - Red: 10+ devices
+- [ ] Tap cell to zoom in / show detail sheet
+- [ ] Display aggregated data per cell (wifi count, ble count, cell count)
+- [ ] Privacy: suppress exact counts at precision 7+ (show "10+" instead of "12")
+- [ ] Grid toggle in layer selector
+
+### Phase 3: Deflock-Style Marker Clusters
+
+- [ ] Implement marker clustering for TOWERS/WIFI/BLE layers
+- [ ] Cluster marker shows device count badge
+- [ ] Zoom threshold: cluster → individual at z15+
+- [ ] Custom cluster implementation (lighter than plugin)
+- [ ] Individual markers show threat coloring:
+  - Green: clean
+  - Yellow: watch flag
+  - Red: hostile flag
+
+### Phase 4: UI Polish & Integration
+
+- [ ] Layer selector (GRID/TOWERS/WIFI/BLE)
+- [ ] Time range filter (1h/24h/7d/all)
+- [ ] Threat filter (all/clean/watch/hostile)
+- [ ] Detail sheets on marker tap:
+  - Tower: PCI, TAC, network type, band, operator, RSSI
+  - WiFi: SSID, BSSID, vendor, security, channel
+  - BLE: MAC, display name, RSSI, is_tracker flag
+- [ ] Legend overlay with threat color key
+- [ ] Current location button (center on GPS)
+- [ ] Zoom to fit all markers button
+
+### Phase 5: Advanced Features
+
+- [ ] Directionality logging: capture signal direction per measurement
+- [ ] AP location triangulation: multiple measurements → centroid
+- [ ] GPS accuracy tracking per observation
+- [ ] Privacy mode: disable exact location display
+
+---
+
+## Implementation Notes
+
+### BitChat-Style Grid
+- Use standard geohash algorithm (not H3 hexagonal)
+- Precision levels: 2=region, 5=city, 7=block, 8+=building
+- Tap-to-zoom: detect tap on cell, calculate bounds, animate to those bounds
+
+### Deflock-Style Clusters
+- Grid-based clustering: divide viewport into cells, group markers per cell
+- Dynamic sizing based on device count in cluster
+- Badge shows count: "5" or "12+"
+
+### Tile Fallback Strategy
+1. Try primary OSM
+2. If all tiles fail after 3 attempts, switch to fallback
+3. User can manually select tile provider in settings
+
+### Privacy Considerations
+- High-precision geohash (7+ chars): show "1+" not exact count
+- User input is anonymized by default
+- Optional "reveal exact location" for trusted sessions

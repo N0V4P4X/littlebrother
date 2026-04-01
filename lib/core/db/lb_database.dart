@@ -288,6 +288,7 @@ class LBDatabase {
             final now = s.timestamp.millisecondsSinceEpoch;
             final vendor = s.metadata['vendor'] as String?;
             final rssi = s.rssi;
+            final accuracy = s.metadata['gps_accuracy'] as num?;
             
             batch.rawInsert('''
               INSERT INTO ${LBDb.tDeviceWaypoints} (
@@ -296,8 +297,24 @@ class LBDatabase {
                 first_seen, last_seen, obs_count, threat_flag, vendor, metadata_json
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(identifier) DO UPDATE SET
-                lat = excluded.lat,
-                lon = excluded.lon,
+                -- Keep the position with best (lowest) accuracy, or use weighted average
+                lat = CASE 
+                  WHEN COALESCE(${LBDb.tDeviceWaypoints}.accuracy_m, 999999) > COALESCE(excluded.accuracy_m, 999999) 
+                  THEN excluded.lat 
+                  ELSE ${LBDb.tDeviceWaypoints}.lat 
+                END,
+                lon = CASE 
+                  WHEN COALESCE(${LBDb.tDeviceWaypoints}.accuracy_m, 999999) > COALESCE(excluded.accuracy_m, 999999) 
+                  THEN excluded.lon 
+                  ELSE ${LBDb.tDeviceWaypoints}.lon 
+                END,
+                -- Keep best accuracy
+                accuracy_m = CASE 
+                  WHEN COALESCE(${LBDb.tDeviceWaypoints}.accuracy_m, 999999) > COALESCE(excluded.accuracy_m, 999999) 
+                  THEN excluded.accuracy_m 
+                  ELSE ${LBDb.tDeviceWaypoints}.accuracy_m 
+                END,
+                -- RSSI: weighted average
                 rssi_avg = CASE 
                   WHEN ${LBDb.tDeviceWaypoints}.rssi_count > 0 THEN (${LBDb.tDeviceWaypoints}.rssi_avg * ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_avg * excluded.rssi_count) / (${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count)
                   ELSE excluded.rssi_avg
@@ -305,13 +322,15 @@ class LBDatabase {
                 rssi_count = ${LBDb.tDeviceWaypoints}.rssi_count + excluded.rssi_count,
                 rssi_min = MIN(${LBDb.tDeviceWaypoints}.rssi_min, excluded.rssi_min),
                 rssi_max = MAX(${LBDb.tDeviceWaypoints}.rssi_max, excluded.rssi_max),
+                -- Keep earliest first_seen, latest last_seen
+                first_seen = MIN(${LBDb.tDeviceWaypoints}.first_seen, excluded.first_seen),
                 last_seen = MAX(${LBDb.tDeviceWaypoints}.last_seen, excluded.last_seen),
                 obs_count = ${LBDb.tDeviceWaypoints}.obs_count + excluded.obs_count,
                 threat_flag = MAX(${LBDb.tDeviceWaypoints}.threat_flag, excluded.threat_flag),
                 metadata_json = excluded.metadata_json
             ''', [
               s.identifier, s.signalType, s.displayName, s.lat, s.lon,
-              null, rssi, 1, rssi, rssi,
+              accuracy, rssi, 1, rssi, rssi,
               now, now, 1, s.threatFlag, vendor, jsonEncode(s.metadata),
             ]);
           }
@@ -527,20 +546,21 @@ class LBDatabase {
       return CellTower(
         cellKey:         (row['cell_key'] as String?) ?? '',
         displayName:     row['display_name']?.toString() ?? '',
-        pci:             (meta['pci'] as num?)?.toInt() ?? -1,
-        tac:             (meta['tac'] as num?)?.toInt() ?? -1,
-        networkType:     meta['network_type_name'] as String? ?? 
-                         (meta['type'] as String?) ?? '?',
-        band:            meta['band'] as String?,
-        operator:        meta['operator'] as String?,
-        isServing:       (meta['is_serving'] as bool?) ?? false,
+        pci:             (meta['pci'] is num) ? (meta['pci'] as num).toInt() : -1,
+        tac:             (meta['tac'] is num) ? (meta['tac'] as num).toInt() : -1,
+        networkType:     (meta['network_type_name']?.toString()) ?? 
+                         (meta['type']?.toString()) ?? '?',
+        band:            meta['band']?.toString(),
+        operator:        meta['operator']?.toString(),
+        isServing:       (meta['is_serving'] is bool) ? (meta['is_serving'] as bool) : 
+                         ((meta['is_serving'] is num) ? (meta['is_serving'] as num).toInt() == 1 : false),
         position:         LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
         observationCount: (row['obs_count'] as num?)?.toInt() ?? 0,
         worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
         worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
-        rsrp:            (meta['rsrp'] as num?)?.toInt() ?? -120,
-        rsrq:            (meta['rsrq'] as num?)?.toInt() ?? -20,
-        sinr:            (meta['sinr'] as num?)?.toInt() ?? -20,
+        rsrp:            (meta['rsrp'] is num) ? (meta['rsrp'] as num).toInt() : -120,
+        rsrq:            (meta['rsrq'] is num) ? (meta['rsrq'] as num).toInt() : -20,
+        sinr:            (meta['sinr'] is num) ? (meta['sinr'] as num).toInt() : -20,
         firstSeen:       DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );
@@ -550,7 +570,7 @@ class LBDatabase {
   Map<String, dynamic> _parseJson(String json) {
     try {
       return Map<String, dynamic>.from(
-        const JsonDecoder().convert(json) as Map,
+        jsonDecode(json) as Map,
       );
     } catch (_) {
       return {};
@@ -603,14 +623,14 @@ class LBDatabase {
       return WifiDevice(
         bssid:            (row['bssid'] as String?) ?? '',
         ssid:             row['ssid']?.toString() ?? '',
-        vendor:           (row['vendor'] as String?) ?? meta['vendor'] as String? ?? '',
+        vendor:           (row['vendor'] as String?) ?? (meta['vendor']?.toString()) ?? '',
         position:         LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
         observationCount: (row['obs_count'] as num?)?.toInt() ?? 0,
         worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
         worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
         rssi:            (row['rssi'] as num?)?.toInt() ?? -100,
-        channel:         (meta['channel'] as num?)?.toInt(),
-        security:        meta['capabilities'] as String?,
+        channel:         (meta['channel'] is num) ? (meta['channel'] as num).toInt() : null,
+        security:        meta['capabilities']?.toString(),
         firstSeen:       DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );
@@ -667,8 +687,9 @@ class LBDatabase {
         worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
         worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
         rssi:            (row['rssi'] as num?)?.toInt() ?? -100,
-        isTracker:       meta['is_tracker'] as bool? ?? false,
-        txPower:         (meta['tx_power'] as num?)?.toInt(),
+        isTracker:       (meta['is_tracker'] is bool) ? (meta['is_tracker'] as bool) : 
+                         ((meta['is_tracker'] is num) ? (meta['is_tracker'] as num).toInt() == 1 : false),
+        txPower:         (meta['tx_power'] is num) ? (meta['tx_power'] as num).toInt() : null,
         firstSeen:       DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );

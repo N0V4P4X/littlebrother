@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:latlong2/latlong.dart';
 import 'package:littlebrother/core/db/geohash.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
@@ -99,75 +100,6 @@ class DeviceProfile {
   }
 }
 
-class MockCommunityData {
-  static bool _testModeEnabled = false;
-
-  static void enableTestMode() {
-    assert(() {
-      _testModeEnabled = true;
-      return true;
-    }());
-  }
-
-  static bool get isEnabled => _testModeEnabled;
-
-  static List<TestThreat> getMockThreats() {
-    final now = DateTime.now();
-    return [
-      TestThreat(
-        id: 'TEST_STINGRAY_001',
-        signalType: 'cell',
-        threatType: 'stingray',
-        confidence: 75,
-        geohash: 'dr72h8k',
-        position: LatLng(37.7749, -122.4194),
-        label: '[TEST] StingRay Demo - San Francisco',
-        firstReported: now.subtract(const Duration(days: 5)),
-      ),
-      TestThreat(
-        id: 'TEST_ROGUE_AP_001',
-        signalType: 'wifi',
-        threatType: 'rogue_ap',
-        confidence: 60,
-        geohash: 'dr72h9k',
-        position: LatLng(37.7751, -122.4180),
-        label: '[TEST] Rogue AP Demo - Downtown',
-        firstReported: now.subtract(const Duration(days: 3)),
-      ),
-      TestThreat(
-        id: 'TEST_TRACKER_001',
-        signalType: 'ble',
-        threatType: 'tracker',
-        confidence: 85,
-        geohash: 'dr72j2m',
-        position: LatLng(37.7760, -122.4150),
-        label: '[TEST] BLE Tracker Demo - Market St',
-        firstReported: now.subtract(const Duration(hours: 12)),
-      ),
-      TestThreat(
-        id: 'TEST_STINGRAY_002',
-        signalType: 'cell',
-        threatType: 'stingray',
-        confidence: 90,
-        geohash: '9q5f8ve',
-        position: LatLng(34.0522, -118.2437),
-        label: '[TEST] StingRay Demo - Los Angeles',
-        firstReported: now.subtract(const Duration(days: 7)),
-      ),
-      TestThreat(
-        id: 'TEST_STINGRAY_003',
-        signalType: 'cell',
-        threatType: 'stingray',
-        confidence: 45,
-        geohash: 'dr72gk6',
-        position: LatLng(37.8044, -122.2712),
-        label: '[TEST] Low Conf Demo - Oakland',
-        firstReported: now.subtract(const Duration(days: 1)),
-      ),
-    ];
-  }
-}
-
 enum CellPrecision {
   coarse(6, '1.2 km'),
   standard(7, '150 m'),
@@ -215,33 +147,10 @@ enum MapLayer {
   grid('GRID'),
   towers('TOWERS'),
   wifi('WIFI'),
-  ble('BLE'),
-  test('TEST');
+  ble('BLE');
 
   final String label;
   const MapLayer(this.label);
-}
-
-class TestThreat {
-  final String id;
-  final String signalType;
-  final String threatType;
-  final int confidence;
-  final String geohash;
-  final LatLng position;
-  final String label;
-  final DateTime firstReported;
-
-  TestThreat({
-    required this.id,
-    required this.signalType,
-    required this.threatType,
-    required this.confidence,
-    required this.geohash,
-    required this.position,
-    required this.label,
-    required this.firstReported,
-  });
 }
 
 class CellTower {
@@ -284,27 +193,36 @@ class CellTower {
   });
 
   factory CellTower.fromMap(Map<String, dynamic> m) {
-    final lat = m['lat'] as double;
-    final lon = m['lon'] as double;
+    final meta = m['metadata_json'] != null ? _parseJson(m['metadata_json'] as String) : <String, dynamic>{};
     return CellTower(
-      cellKey:         m['cell_key'] as String,
-      displayName:    m['display_name'] as String? ?? '',
-      pci:            m['pci'] as int? ?? -1,
-      tac:            m['tac'] as int? ?? -1,
-      networkType:    m['network_type'] as String? ?? '?',
-      band:           m['band'] as String?,
-      operator:       m['operator'] as String?,
-      isServing:      (m['is_serving'] as int? ?? 0) == 1,
-      position:       LatLng(lat, lon),
-      observationCount: m['obs_count'] as int? ?? 1,
-      worstThreat:     m['max_severity'] as int? ?? 0,
-      worstThreatFlag: m['worst_flag'] as int? ?? LBThreatFlag.clean,
-      rsrp:            m['rsrp'] as int? ?? -120,
-      rsrq:            m['rsrq'] as int? ?? -20,
-      sinr:            m['sinr'] as int? ?? -20,
-      firstSeen:       DateTime.fromMillisecondsSinceEpoch(m['first_seen'] as int),
-      lastSeen:        DateTime.fromMillisecondsSinceEpoch(m['last_seen'] as int),
+      cellKey:         (m['cell_key'] as String?) ?? '',
+      displayName:    (m['display_name']?.toString()) ?? '',
+      pci:            (m['pci'] as num?)?.toInt() ?? (meta['pci'] as num?)?.toInt() ?? -1,
+      tac:            (m['tac'] as num?)?.toInt() ?? (meta['tac'] as num?)?.toInt() ?? -1,
+      networkType:    (m['network_type'] as String?) ?? meta['network_type_name'] as String? ?? meta['type'] as String? ?? '?',
+      band:           (m['band'] as String?) ?? meta['band'] as String?,
+      operator:       (m['operator'] as String?) ?? meta['operator'] as String?,
+      isServing:      (m['is_serving'] as bool?) ?? ((meta['is_serving'] as num?)?.toInt() ?? 0) == 1,
+      position:       LatLng((m['lat'] as num?)?.toDouble() ?? 0.0, (m['lon'] as num?)?.toDouble() ?? 0.0),
+      observationCount: (m['obs_count'] as num?)?.toInt() ?? 1,
+      worstThreat:     (m['max_severity'] as num?)?.toInt() ?? 0,
+      worstThreatFlag: (m['worst_flag'] as num?)?.toInt() ?? LBThreatFlag.clean,
+      rsrp:            (m['rsrp'] as num?)?.toInt() ?? (meta['rsrp'] as num?)?.toInt() ?? -120,
+      rsrq:            (m['rsrq'] as num?)?.toInt() ?? (meta['rsrq'] as num?)?.toInt() ?? -20,
+      sinr:            (m['sinr'] as num?)?.toInt() ?? (meta['sinr'] as num?)?.toInt() ?? -20,
+      firstSeen:       DateTime.fromMillisecondsSinceEpoch((m['first_seen'] as num?)?.toInt() ?? 0),
+      lastSeen:        DateTime.fromMillisecondsSinceEpoch((m['last_seen'] as num?)?.toInt() ?? 0),
     );
+  }
+
+  static Map<String, dynamic> _parseJson(String json) {
+    try {
+      return Map<String, dynamic>.from(
+        jsonDecode(json) as Map,
+      );
+    } catch (_) {
+      return {};
+    }
   }
 
   String get threatLabel {

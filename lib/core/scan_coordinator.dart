@@ -141,8 +141,45 @@ class ScanCoordinator {
     debugPrint('LB_COORD init complete');
   }
 
+  Future<bool> _waitForGps({int timeoutSeconds = 90}) async {
+    final gps = _gps;
+    final startTime = DateTime.now();
+    final timeout = Duration(seconds: timeoutSeconds);
+    
+    // If already has fresh fix, return immediately
+    if (gps.hasFreshFix) {
+      return true;
+    }
+    
+    stderr.write('LB_COORD: waiting for GPS fresh fix (max ${timeoutSeconds}s)\n');
+    debugPrint('LB_COORD: waiting for GPS fresh fix');
+    
+    while (DateTime.now().difference(startTime) < timeout) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (gps.hasFreshFix) {
+        stderr.write('LB_COORD: GPS acquired after ${DateTime.now().difference(startTime).inSeconds}s\n');
+        debugPrint('LB_COORD: GPS acquired');
+        return true;
+      }
+    }
+    
+    stderr.write('LB_COORD: GPS timeout after ${timeoutSeconds}s\n');
+    debugPrint('LB_COORD: GPS timeout');
+    return false;
+  }
+
   Future<void> startScan() async {
     if (isScanning) return;
+    
+    // Wait for GPS fresh fix (max 90 seconds)
+    final gpsReady = await _waitForGps(timeoutSeconds: 90);
+    if (!gpsReady) {
+      stderr.write('LB_COORD: GPS not ready after 90s, starting scan anyway\n');
+      debugPrint('LB_COORD: GPS not ready, scanning may have reduced position accuracy');
+    } else {
+      stderr.write('LB_COORD: GPS ready, starting scan\n');
+      debugPrint('LB_COORD: GPS fresh fix acquired');
+    }
     
     stderr.write('LB_COORD: startScan called\n');
     _wifiSub?.cancel();
@@ -347,10 +384,13 @@ class ScanCoordinator {
         // Stamp GPS onto each signal
         final geotagged = signals.map((s) {
           if (_gps.hasFreshFix && _gps.lastPosition != null) {
+            final pos = _gps.lastPosition!;
             final stamped = s.copyWith(
-              lat: _gps.lastPosition!.latitude,
-              lon: _gps.lastPosition!.longitude,
+              lat: pos.latitude,
+              lon: pos.longitude,
             );
+            // Store GPS accuracy for deduplication logic
+            stamped.metadata['gps_accuracy'] = pos.accuracy;
             if (_gps.currentGeohash != null) {
               stamped.metadata['geohash'] = _gps.currentGeohash!;
             }

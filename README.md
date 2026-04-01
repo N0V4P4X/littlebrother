@@ -2,7 +2,7 @@
 
 Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · Evasion Automation
 
-Version: 0.5.0 (2026-03-29)
+Version: 0.5.1 (2026-03-31)
 
 > **Platform**: Android primary · Linux desktop · iOS/macOS/Windows planned
 
