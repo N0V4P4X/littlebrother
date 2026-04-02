@@ -1,0 +1,16 @@
+name: lb_models
+description: Shared data models for LittleBrother
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+export_to:
+  path: lib/lb_models.dart

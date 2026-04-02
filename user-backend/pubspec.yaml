@@ -1,0 +1,37 @@
+name: littlebrother_backend
+description: LittleBrother User Backend Service - Headless scanning and data management
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Scanning modules (shared with user-app)
+  flutter_blue_plus: ^2.2.1
+  wifi_scan: ^0.4.1
+  geolocator: ^14.0.2
+
+  # Storage
+  sqflite: ^2.3.3
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  # Networking
+  http: ^1.2.0
+
+  # Utilities
+  uuid: ^4.4.2
+  intl: ^0.20.2
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/oui/oui_table.json

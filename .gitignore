@@ -1,16 +1,29 @@
-# Flutter
+# Flutter (root level - for future monorepo support)
 build/
 .dart_tool/
 .packages
 .pub-cache/
 .flutter-plugins
 .flutter-plugins-dependencies
-.packages
 
-# Android
-android/.gradle/
-android/app/build/
-android/build/
+# User App (Flutter frontend)
+user-app/build/
+user-app/.dart_tool/
+user-app/.packages
+user-app/.flutter-plugins
+user-app/.flutter-plugins-dependencies
+
+# Crowdsource Server
+crowdsource-server/build/
+crowdsource-server/.dart_tool/
+crowdsource-server/.packages
+crowdsource-server/.flutter-plugins
+crowdsource-server/.flutter-plugins-dependencies
+
+# Android (user-app)
+user-app/android/.gradle/
+user-app/android/app/build/
+user-app/android/build/
 *.jks
 *.keystore
 *.apk

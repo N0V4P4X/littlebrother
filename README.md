@@ -8,6 +8,20 @@ Version: 0.7.2 (2026-04-02)
 
 ---
 
+## System Architecture
+
+LittleBrother is organized as a three-tier system:
+
+| Tier | Location | Purpose |
+|------|----------|---------|
+| **User Frontend** | `user-app/` | Flutter mobile/desktop app with UI |
+| **User Backend** | `user-backend/` | Headless scanning service + data management |
+| **Crowdsource Server** | `crowdsource-server/` | Aggregates metadata from multiple users |
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture documentation.
+
+---
+
 ## Feature Roadmap
 
 ### Currently Supported
@@ -534,9 +548,56 @@ Samsung Galaxy S25 runs Android 15 (API 35). A few quirks to be aware of:
 ## Project Structure
 
 ```
+littlebrother/
+├── docs/
+│   └── ARCHITECTURE.md                 # Full system architecture documentation
+│
+├── packages/
+│   └── lb-models/                      # Shared data models (signal, session, threat)
+│
+├── user-app/                           # Flutter frontend (main application)
+│   ├── lib/
+│   │   ├── core/                      # Core modules (DB, models, services)
+│   │   ├── modules/                    # Scanner implementations (WiFi, BLE, Cell, GPS)
+│   │   ├── analyzer/                   # Threat detection (stingray, rogue AP)
+│   │   ├── alerts/                     # Push notifications
+│   │   ├── opsec/                      # RF kill controls
+│   │   └── ui/                         # Screens, widgets, themes
+│   ├── android/, ios/, linux/, ...     # Platform-specific code
+│   └── pubspec.yaml
+│
+├── user-backend/                       # User backend service (headless)
+│   ├── lib/
+│   │   ├── main.dart                  # CLI entry point
+│   │   ├── backend_service.dart       # Scan orchestration
+│   │   ├── db/                        # Local database operations
+│   │   ├── api/                       # REST API for user-app communication
+│   │   └── sync/                      # Crowdsource server sync
+│   └── pubspec.yaml
+│
+├── crowdsource-server/                 # Aggregation server (formerly server/)
+│   ├── lib/
+│   │   ├── main.dart                  # Entry point
+│   │   ├── http_server.dart           # REST API + web dashboard
+│   │   ├── config.dart                # YAML configuration
+│   │   ├── db/server_db.dart          # Crowdsource database
+│   │   └── tray.dart                  # System tray integration
+│   └── pubspec.yaml
+│
+├── scripts/
+│   └── gen_oui.py                      # IEEE OUI table generator
+│
+├── README.md                           # This file
+├── CHANGELOG.md
+└── TODO.md
+```
+
+### User App Structure (user-app/lib/)
+
+```
 lib/
 ├── core/
-│   ├── constants/lb_constants.dart    # All magic numbers + channel names
+│   ├── constants/lb_constants.dart    # Magic numbers + channel names
 │   ├── models/lb_signal.dart          # LBSignal, LBThreatEvent, LBSession
 │   ├── db/
 │   │   ├── lb_database.dart           # SQLite — all DAOs
@@ -563,29 +624,6 @@ lib/
     │   └── permission_gate.dart       # Permission onboarding flow
     └── widgets/
         └── signal_tile.dart           # Signal list row widget
-
-android/app/src/main/kotlin/art/n0v4/littlebrother/
-├── MainActivity.kt                    # Flutter entry + channel registration
-├── CellChannelHandler.kt              # TelephonyManager → Dart bridge
-├── PermissionChannelHandler.kt        # Native permission requests (Samsung-safe)
-└── WakeLockHandler.kt                 # Partial wakelock for background scan
-
-ios/
-├── Runner/
-│   ├── Info.plist                     # Permission strings (Bluetooth, Location, Local Network)
-│   └── Runner.entitlements            # wifi-info + app-groups entitlements
-└── Podfile                            # iOS deployment target (13.0)
-
-linux/
-├── CMakeLists.txt                     # Linux desktop build (CMake + Ninja)
-├── runner/                            # GTK application entry point
-└── flutter/                           # Flutter plugin registration
-
-scripts/
-└── gen_oui.py                         # IEEE OUI table generator (run once)
-
-tool/
-└── lb_cli.dart                        # Gridland CLI/TUI entry point (planned)
 ```
 
 ---
