@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -45,7 +46,10 @@ class ScanCoordinator {
 
   String? _sessionId;
   DateTime? _sessionStartTime;
-  bool _processingSignals = false;
+  // Signal queue — batches are enqueued rather than dropped when the previous
+  // batch is still being processed (DB writes + analyzer can be slow).
+  final _signalQueue = ListQueue<List<LBSignal>>();
+  bool _drainingQueue = false;
   bool get isScanning => _sessionId != null;
   String? get sessionId => _sessionId;
 
@@ -355,28 +359,36 @@ class ScanCoordinator {
     _sessionId = null;
     _sessionStartTime = null;
     _threatCount = 0;
+    _signalQueue.clear(); // discard any queued batches from the ended session
     stderr.write('LB_COORD: scan stopped\n');
     debugPrint('LB_COORD scan stopped');
   }
 
-    Future<void> _onSignals(List<LBSignal> signals) async {
-      if (_processingSignals) {
-        stderr.write('LB_COORD: _onSignals: already processing, skipping batch\n');
-        debugPrint('LB_COORD _onSignals: already processing, skipping batch');
-        return;
+
+  /// Called by every scanner stream listener.  Enqueues the batch and starts
+  /// the drain loop if it is not already running.  No batch is ever dropped —
+  /// if processing is in progress the batch simply waits its turn.
+  void _onSignals(List<LBSignal> signals) {
+    if (_sessionId == null || signals.isEmpty) return;
+    _signalQueue.add(signals);
+    _drainSignalQueue();
+  }
+
+  Future<void> _drainSignalQueue() async {
+    if (_drainingQueue) return; // drain loop already running
+    _drainingQueue = true;
+    try {
+      while (_signalQueue.isNotEmpty) {
+        final batch = _signalQueue.removeFirst();
+        await _processBatch(batch);
       }
-      if (_sessionId == null) {
-        stderr.write('LB_COORD: _onSignals: no session, skipping\n');
-        debugPrint('LB_COORD _onSignals: no session, skipping');
-        return;
-      }
-      if (signals.isEmpty) {
-        stderr.write('LB_COORD: _onSignals: empty batch, skipping\n');
-        debugPrint('LB_COORD _onSignals: empty batch, skipping');
-        return;
-      }
-      
-      _processingSignals = true;
+    } finally {
+      _drainingQueue = false;
+    }
+  }
+
+  Future<void> _processBatch(List<LBSignal> signals) async {
+      if (_sessionId == null) return;
       try {
         stderr.write('LB_COORD: _onSignals processing ${signals.length} signals\n');
         debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
@@ -465,8 +477,9 @@ class ScanCoordinator {
         if (!_signalCtrl.isClosed) {
           _signalCtrl.add(geotagged);
         }
-      } finally {
-        _processingSignals = false;
+      } catch (e, st) {
+        stderr.write('LB_COORD: _processBatch error: $e\n$st\n');
+        debugPrint('LB_COORD _processBatch error: $e\n$st');
       }
     }
   

@@ -51,14 +51,13 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final observations = await db.getObservationsBySession(session.id);
     
     final buffer = StringBuffer();
-    buffer.writeln('Type,Identifier,Display Name,RSSI,dBm,Distance m,Risk Score,Lat,Lon,Timestamp');
+    buffer.writeln('Type,Identifier,Display Name,RSSI (dBm),Distance m,Risk Score,Lat,Lon,Timestamp');
     
     for (final o in observations) {
       buffer.writeln([
         o.signalType,
         o.identifier,
         '"${o.displayName.replaceAll('"', '""')}"',
-        o.rssi,
         o.rssi,
         o.distanceM.toStringAsFixed(2),
         o.riskScore,

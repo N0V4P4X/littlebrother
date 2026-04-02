@@ -9,19 +9,23 @@ class OuiLookup {
   static final OuiLookup instance = OuiLookup._();
 
   Map<String, String>? _table;
-  bool _loading = false;
+  Completer<void>? _initCompleter;
 
   Future<void> init() async {
-    if (_table != null || _loading) return;
-    _loading = true;
+    if (_table != null) return;
+    if (_initCompleter != null) {
+      // Another caller is already loading — wait for it.
+      return _initCompleter!.future;
+    }
+    _initCompleter = Completer<void>();
     try {
       final raw = await rootBundle.loadString('assets/oui/oui_table.json');
       _table = Map<String, String>.from(jsonDecode(raw) as Map);
+      _initCompleter!.complete();
     } catch (e) {
       debugPrint('LB_OUI failed to load OUI table: $e');
       _table = {};
-    } finally {
-      _loading = false;
+      _initCompleter!.complete();
     }
   }
 

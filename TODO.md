@@ -440,3 +440,112 @@
 - High-precision geohash (7+ chars): show "1+" not exact count
 - User input is anonymized by default
 - Optional "reveal exact location" for trusted sessions
+
+---
+
+## Round 6 Fixes (2026-04-02) — External Code Review
+
+### 6.1 classifyDeviceMovement: missing sqrt + wrong longitude scaling
+- **File:** `lib/core/db/lb_database.dart`
+- **Issue:** Distance was computed as `latM² + lonM²` (metres²) — missing `sqrt`. Longitude
+  correction used hardcoded `0.7` instead of `cos(lat)`. Static/mobile thresholds were
+  applied to squared metres, making classification completely wrong.
+- **Fix:** Use `math.sqrt(...)` for Euclidean distance; use `cos(midLat * π/180)` for
+  latitude-correct longitude scaling. Added `dart:math` import.
+- **Status:** [FIXED]
+
+### 6.2 BtClassicScanner: `discoverable on` violates passive-only OPSEC
+- **File:** `lib/modules/bt_classic/bt_classic_scanner.dart`
+- **Issue:** `bluetoothctl discoverable on` makes the device actively visible to nearby
+  Bluetooth scanners. Passive receive-only mode requires no active emission.
+- **Fix:** Removed the line. `bluetoothctl devices` works without discoverable mode.
+- **Status:** [FIXED]
+
+### 6.3 cell_id_lookup.dart: missing debugPrint import (compile error)
+- **File:** `lib/core/services/cell_id_lookup.dart`
+- **Issue:** Five `debugPrint()` calls with no `import 'package:flutter/foundation.dart'`.
+  Compile-time `undefined name 'debugPrint'` error.
+- **Fix:** Added `import 'package:flutter/foundation.dart' show debugPrint;`.
+- **Status:** [FIXED]
+
+### 6.4 AggregateMapScreen: GPS timer leaked + no dispose()
+- **File:** `lib/ui/screens/aggregate_map_screen.dart`
+- **Issue:** `Timer.periodic` return value discarded; no `dispose()` override. Timer
+  continued running after widget removed from tree.
+- **Fix:** Added `_gpsTimer` field; `dispose()` cancels timer and `_mapController`.
+- **Status:** [FIXED]
+
+### 6.5 LBDb.name mismatch with README / adb pull docs
+- **File:** `lib/core/constants/lb_constants.dart`
+- **Issue:** Constant was `'littlebrother.db'`; README and all debug instructions use
+  `lbscan.db`. Users following the docs would get "file not found".
+- **Fix:** Changed constant to `'lbscan.db'`.
+- **Status:** [FIXED]
+
+### 6.6 Missing secrets.dart (compile error)
+- **File:** `lib/core/secrets.dart` (created)
+- **Issue:** Four files imported `secrets.dart` which was absent from the repo.
+  Project would not compile.
+- **Fix:** Created compilable stub with `openCellIdApiKey`, `hasOpenCellIdKey`,
+  `effectiveApiKey`, and `privacyMode`. All safe defaults (empty key, privacy off).
+- **Status:** [FIXED]
+
+### 6.7 Signal batches silently dropped under scanner contention
+- **File:** `lib/core/scan_coordinator.dart`
+- **Issue:** `_processingSignals` flag caused incoming scanner batches to be silently
+  discarded while DB writes / analyzer were running. Missed observations = reduced
+  detection coverage for a SIGINT tool.
+- **Fix:** Replaced flag with `ListQueue<List<LBSignal>>` drain loop. Batches are
+  enqueued and processed in arrival order; none are ever dropped. Queue cleared on
+  `stopScan()`. Added `dart:collection` import.
+- **Status:** [FIXED]
+
+
+## Round 7 Fixes (2026-04-02) — External Code Review, Second Pass
+
+### 7.1 RadarScreen: stale hardcoded version string
+- **File:** `lib/ui/radar/radar_screen.dart`
+- **Issue:** Top bar showed `v0.1.0` regardless of pubspec version.
+- **Fix:** Updated to `v0.7.1`.
+- **Status:** [FIXED]
+
+### 7.2 RadarPainter.shouldRepaint: misses blip content changes
+- **File:** `lib/ui/radar/radar_painter.dart`
+- **Issue:** Only checked blip count and sweep angle. A blip gaining a threat flag
+  (clean → hostile) or changing RSSI would not trigger repaint if count was unchanged.
+- **Fix:** Added per-blip id/threatFlag/rssi/angle/radius comparison.
+- **Status:** [FIXED]
+
+### 7.3 SignalListScreen._filtered: cache stale across signal updates
+- **File:** `lib/ui/screens/signal_list_screen.dart`
+- **Issue:** Cache key only tracked sort order. New signal batches from parent were
+  served the stale sorted list until sort was toggled.
+- **Fix:** Added `_cachedInput` identity check — cache invalidated when `widget.signals`
+  reference changes.
+- **Status:** [FIXED]
+
+### 7.4 Timeline CSV export: duplicate RSSI column
+- **File:** `lib/ui/screens/timeline_screen.dart`
+- **Issue:** Header declared `RSSI,dBm` as two columns; both mapped to `o.rssi`.
+  Column count mismatch causes malformed CSV (10 header cols, 9 data cols).
+- **Fix:** Merged to single `RSSI (dBm)` column; removed duplicate value.
+- **Status:** [FIXED]
+
+### 7.5 OuiLookup.init(): concurrent-call race condition
+- **File:** `lib/core/db/oui_lookup.dart`
+- **Issue:** If two callers hit `init()` before `_table` is set, second caller saw
+  `_loading = true`, returned early, and immediately called `resolve()` on a null
+  `_table`, causing a null-check crash.
+- **Fix:** Replaced `bool _loading` flag with `Completer<void>` — all concurrent callers
+  await the same future, ensuring `_table` is populated before any returns.
+- **Status:** [FIXED]
+
+### 7.6 PermissionGate SKIP button was a no-op
+- **File:** `lib/ui/screens/permission_gate.dart`
+- **Issue:** `onPressed: () => setState(() {})` cannot advance past the gate because
+  `_requiredGranted` remains false — the rebuild just re-renders the same screen.
+  The comment said "force rebuild → auto-advance" but that was wrong.
+- **Fix:** Added `bool _skipped` flag. SKIP sets it to true; `build()` returns
+  `widget.child` when `_requiredGranted || _skipped`.
+- **Status:** [FIXED]
+

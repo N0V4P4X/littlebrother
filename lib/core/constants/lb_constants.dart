@@ -8,7 +8,7 @@ class LBChannels {
 }
 
 class LBDb {
-  static const name            = 'littlebrother.db';
+  static const name            = 'lbscan.db'; // matches README adb pull instructions
   static const version         = 6;
   static const tObservations   = 'observations';
   static const tKnownDevices   = 'known_devices';

@@ -20,6 +20,7 @@ class _SignalListScreenState extends State<SignalListScreen>
   final _sortNotifier = ValueNotifier<String>('rssi');
   List<LBSignal>? _cachedSignals;
   String? _cachedSortBy;
+  List<LBSignal>? _cachedInput; // track which list was sorted
 
   final _tabTypes = [
     (label: 'ALL',  type: null),
@@ -43,9 +44,11 @@ class _SignalListScreenState extends State<SignalListScreen>
 
   List<LBSignal> _filtered(String? type) {
     final sortBy = _sortNotifier.value;
-    if (_cachedSignals == null || _cachedSortBy != sortBy) {
-      _cachedSortBy = sortBy;
-      var list = widget.signals.where((s) => s.identifier != 'DOWNGRADE_EVENT').toList();
+    final input  = widget.signals;
+    if (_cachedSignals == null || _cachedSortBy != sortBy || !identical(_cachedInput, input)) {
+      _cachedSortBy  = sortBy;
+      _cachedInput   = input;
+      var list = input.where((s) => s.identifier != 'DOWNGRADE_EVENT').toList();
       switch (sortBy) {
         case 'rssi': list.sort((a, b) => b.rssi.compareTo(a.rssi));
         case 'risk': list.sort((a, b) => b.riskScore.compareTo(a.riskScore));

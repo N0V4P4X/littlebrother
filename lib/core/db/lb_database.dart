@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -804,16 +805,19 @@ class LBDatabase {
       if (point.lon > maxLon) maxLon = point.lon;
     }
     
-    // Calculate rough distance in meters (simplified)
+    // Calculate bounding-box diagonal in meters.
+    // Longitude degrees shrink with latitude: 1° lon = 111 320 * cos(lat) metres.
+    final midLat = (minLat + maxLat) / 2;
     final latDiff = maxLat - minLat;
     final lonDiff = maxLon - minLon;
-    final latMeters = latDiff * 111320; // ~111m per degree
-    final lonMeters = lonDiff * 111320 * 0.7; // rough adjustment for lon
-    
-    final distanceMeters = (latMeters * latMeters + lonMeters * lonMeters).abs();
-    
-    // Thresholds (in meters)
-    if (distanceMeters < 50) return 'static';
+    final latMeters = latDiff * 111320;
+    final lonMeters = lonDiff * 111320 * math.cos(midLat * math.pi / 180);
+
+    // Euclidean distance of bounding-box diagonal (was incorrectly missing sqrt).
+    final distanceMeters = math.sqrt(latMeters * latMeters + lonMeters * lonMeters);
+
+    // Thresholds (in metres)
+    if (distanceMeters < 50)  return 'static';
     if (distanceMeters > 500) return 'mobile';
     return 'unknown';
   }

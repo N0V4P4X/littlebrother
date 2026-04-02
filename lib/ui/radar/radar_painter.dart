@@ -317,8 +317,18 @@ class RadarPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(RadarPainter old) =>
-      old.sweepAngle != sweepAngle ||
-      old.blips.length != blips.length ||
-      old.flashOpacity != flashOpacity;
+  bool shouldRepaint(RadarPainter old) {
+    if (old.sweepAngle != sweepAngle) return true;
+    if (old.flashOpacity != flashOpacity) return true;
+    if (old.blips.length != blips.length) return true;
+    // Check if any blip content changed (threat flag, rssi, position)
+    for (var i = 0; i < blips.length; i++) {
+      final a = old.blips[i], b = blips[i];
+      if (a.id != b.id || a.threatFlag != b.threatFlag ||
+          a.rssi != b.rssi || a.angle != b.angle || a.radius != b.radius) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

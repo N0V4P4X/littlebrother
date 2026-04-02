@@ -45,9 +45,9 @@ class BtClassicScanner {
     try {
       stderr.write('LB_BT_CLASSIC: running bluetoothctl scan\n');
       
-      // First, ensure we're powered on and discoverable
+      // Ensure adapter is powered on.
+      // Do NOT enable discoverable — that would emit RF and expose the device.
       await Process.run('bluetoothctl', ['power', 'on']);
-      await Process.run('bluetoothctl', ['discoverable', 'on']);
       
       // Start scanning
       await Process.run('bluetoothctl', ['scan', 'on']);

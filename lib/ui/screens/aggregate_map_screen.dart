@@ -39,12 +39,20 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   Map<String, List<SignalPoint>> _signalTrails = {};
   LatLng? _currentLocation;
 
+  Timer? _gpsTimer;
   final _mapController = MapController();
 
   @override
   void initState() {
     super.initState();
     _initAndLoad();
+  }
+
+  @override
+  void dispose() {
+    _gpsTimer?.cancel();
+    _mapController.dispose();
+    super.dispose();
   }
 
   Future<void> _initAndLoad() async {
@@ -67,7 +75,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
         );
       });
     }
-    Timer.periodic(const Duration(seconds: 5), (_) {
+    Timer.periodic(const Duration(seconds: 5), (t) {
+      _gpsTimer = t;
       if (mounted && gps.hasFreshFix && gps.lastPosition != null) {
         setState(() {
           _currentLocation = LatLng(

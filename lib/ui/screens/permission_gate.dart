@@ -130,6 +130,7 @@ class _AndroidPermissionGate extends StatefulWidget {
 class _AndroidPermissionGateState extends State<_AndroidPermissionGate>
     with WidgetsBindingObserver {
   bool _checking = true;
+  bool _skipped = false;
   Map<String, _PermInfo> _perms = {};
 
   static final _permDefs = [
@@ -256,7 +257,7 @@ class _AndroidPermissionGateState extends State<_AndroidPermissionGate>
       );
     }
 
-    if (_requiredGranted) return widget.child;
+    if (_requiredGranted || _skipped) return widget.child;
 
     final anyBlocked = _perms.values
         .any((i) => !i.def.optional && i.status.isPermanentlyDenied);
@@ -330,7 +331,7 @@ class _AndroidPermissionGateState extends State<_AndroidPermissionGate>
               const SizedBox(height: 8),
               Center(
                 child: TextButton(
-                  onPressed: () => setState(() {}),  // force rebuild → auto-advance
+                  onPressed: () => setState(() => _skipped = true),  // proceed with reduced capability
                   child: Text('SKIP — REDUCED CAPABILITY',
                       style: LBTextStyles.label.copyWith(
                           color: LBColors.dimText, fontSize: 10)),
