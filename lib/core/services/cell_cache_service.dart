@@ -62,8 +62,8 @@ class CellCacheService {
   static const String _apiBase = 'https://opencellid.org/cell/getInArea';
   
   static const int _regionPrecision = 4;
-  static const int _defaultRangeKm = 50;
   static const int _maxCellsPerRegion = 5000;
+  static const int _maxRequestsPerRegion = 10;
 
   Future<void> initialize() async {
     if (Secrets.privacyMode) {
@@ -110,7 +110,7 @@ class CellCacheService {
 
     await database.transaction((txn) async {
       for (final entry in regionMap.entries) {
-        final bounds = Geohash.decodeBounds(entry.key);
+        final bounds = entry.value;
         
         await txn.rawInsert('''
           INSERT INTO ${LBDb.tVisitedRegions} 
@@ -180,7 +180,7 @@ class CellCacheService {
     int offset = 0;
     const limit = 50;
 
-    while (offset < _maxCellsPerRegion) {
+    while (offset < _maxCellsPerRegion && (offset ~/ limit) < _maxRequestsPerRegion) {
       final queryParams = {
         'key': apiKey,
         'BBOX': '$minLat,$minLon,$maxLat,$maxLon',
@@ -257,10 +257,10 @@ class CellCacheService {
     await database.rawUpdate('''
       UPDATE ${LBDb.tVisitedRegions} SET cell_count = (
         SELECT COUNT(*) FROM ${LBDb.tCachedCells} 
-        WHERE lat BETWEEN (SELECT min_lat FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
-          AND (SELECT max_lat FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
-        AND lon BETWEEN (SELECT min_lon FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
-          AND (SELECT max_lon FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
+        WHERE lat BETWEEN (SELECT MIN(min_lat) FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
+          AND (SELECT MAX(max_lat) FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
+        AND lon BETWEEN (SELECT MIN(min_lon) FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
+          AND (SELECT MAX(max_lon) FROM ${LBDb.tVisitedRegions} WHERE geohash_prefix = ?)
       ) WHERE geohash_prefix = ?
     ''', [regionKey, regionKey, regionKey, regionKey, regionKey]);
   }
@@ -372,10 +372,14 @@ class CellCacheService {
   double _calculateRssi(double distanceKm, int frequencyMhz) {
     if (distanceKm < 0.1) distanceKm = 0.1;
     
-    const speedOfLight = 299792458.0;
-    final wavelength = speedOfLight / (frequencyMhz * 1000000);
+    final distanceM = distanceKm * 1000;
+    final frequencyHz = frequencyMhz * 1000000;
     
-    final freeSpaceLoss = 20 * math.log(distanceKm * 1000) / math.ln10 + 20 * math.log(frequencyMhz.toDouble()) / math.ln10 + 20 * math.log(4 * 3.14159 / wavelength) / math.ln10 - 30;
+    // FSPL (dB) = 20*log10(d) + 20*log10(f) + 20*log10(4π/c)
+    // Simplified: 20*log10(d_m) + 20*log10(f_Hz) - 147.55
+    final freeSpaceLoss = 20 * math.log(distanceM) / math.ln10
+        + 20 * math.log(frequencyHz.toDouble()) / math.ln10
+        - 147.55;
     
     const typicalTxPower = 23;
     

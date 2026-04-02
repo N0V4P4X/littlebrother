@@ -27,7 +27,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   MapLayer _layer = MapLayer.grid;
   TimeRange _timeRange = TimeRange.all;
   ThreatFilter _threatFilter = ThreatFilter.all;
-  int _tileProviderIndex = 1; // Default to CartoDB Voyager
+  final int _tileProviderIndex = 1; // Default to CartoDB Voyager
   int _gridPrecision = 7; // Default precision (150m)
   bool _privacyMode = false;
   bool _showTrails = false;
@@ -75,8 +75,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
         );
       });
     }
-    Timer.periodic(const Duration(seconds: 5), (t) {
-      _gpsTimer = t;
+    _gpsTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted && gps.hasFreshFix && gps.lastPosition != null) {
         setState(() {
           _currentLocation = LatLng(
@@ -116,10 +115,8 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
           }
         }
         
-        final maxObs = cellObjects.isEmpty ? 1 : cellObjects.map((c) => c.observationCount).reduce((a, b) => a > b ? a : b);
         setState(() {
           _gridCells = cellObjects;
-          _maxObs = maxObs;
           _loading = false;
           _error = null;
         });
@@ -180,8 +177,6 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
       _loadRunning = false;
     }
   }
-
-  int _maxObs = 1;
 
   void _onLayerChange(MapLayer layer) {
     setState(() => _layer = layer);

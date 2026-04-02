@@ -87,6 +87,7 @@ class CellScanner {
   Future<void> stop() async {
     _timer?.cancel();
     _timer = null;
+    if (!_controller.isClosed) _controller.close();
   }
 
   Future<void> _scan(String sessionId) async {
@@ -175,6 +176,7 @@ class CellScanner {
       if (!_controller.isClosed) _controller.add([]);
     } catch (e) {
       debugPrint('LB_CELL unexpected error: $e');
+      _consecutiveEmptyCount++;
     }
   }
 

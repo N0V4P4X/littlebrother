@@ -53,21 +53,9 @@ class WifiScanner {
         ? LBScanInterval.wifiForegroundMs
         : LBScanInterval.wifiBackgroundMs;
 
-    _nudgeTimer = Timer.periodic(Duration(milliseconds: interval), (_) async {
-      final can = await WiFiScan.instance.canStartScan();
-      debugPrint('LB_WIFI nudge canStartScan=$can');
-      _canScan = can == CanStartScan.yes;
-
-      final nowThrottled = !_canScan && _lastResultTime != null;
-      if (nowThrottled != _isThrottled) {
-        _isThrottled = nowThrottled;
-        _throttleCtrl.add(_isThrottled);
-      }
-
-      if (_canScan) {
-        await WiFiScan.instance.startScan();
-        debugPrint('LB_WIFI startScan called');
-      }
+    _nudgeTimer = Timer.periodic(Duration(milliseconds: interval), (_) {
+      if (!_nudgeTimer!.isActive) return;
+      _nudgeOnce(sessionId);
     });
 
     final can = await WiFiScan.instance.canStartScan();
@@ -75,6 +63,23 @@ class WifiScanner {
     if (can == CanStartScan.yes) {
       await WiFiScan.instance.startScan();
       debugPrint('LB_WIFI initial startScan called');
+    }
+  }
+
+  Future<void> _nudgeOnce(String sessionId) async {
+    final can = await WiFiScan.instance.canStartScan();
+    debugPrint('LB_WIFI nudge canStartScan=$can');
+    _canScan = can == CanStartScan.yes;
+
+    final nowThrottled = !_canScan && _lastResultTime != null;
+    if (nowThrottled != _isThrottled) {
+      _isThrottled = nowThrottled;
+      _throttleCtrl.add(_isThrottled);
+    }
+
+    if (_canScan) {
+      await WiFiScan.instance.startScan();
+      debugPrint('LB_WIFI startScan called');
     }
   }
 

@@ -116,16 +116,18 @@ class OpenCellIdLookup {
   }
 
   static CellIdComponents? _parseCdma(List<String> parts) {
-    if (parts.length < 4) return null;
+    if (parts.length < 5) return null;
     final mcc = int.tryParse(parts[1]);
     final mnc = int.tryParse(parts[2]);
     if (mcc == null || mcc < 100 || mcc > 999) return null;
     if (mnc == null || mnc < 0 || mnc > 32767) return null;
+    final nid = int.tryParse(parts[3]);
+    final bid = int.tryParse(parts[4]);
     return CellIdComponents(
       mcc: parts[1],
       mnc: parts[2],
-      lac: int.tryParse(parts[3]),
-      cid: int.tryParse(parts[3]),
+      lac: nid,
+      cid: bid,
       networkType: 'CDMA',
     );
   }
@@ -180,7 +182,7 @@ class OpenCellIdLookup {
     };
 
     final uri = Uri.parse(_apiBase).replace(queryParameters: queryParams);
-    debugPrint('OpenCellIdLookup: Requesting $uri');
+    debugPrint('OpenCellIdLookup: Requesting cell lookup (key redacted)');
     final response = await http.get(uri).timeout(const Duration(seconds: 10));
 
     if (response.statusCode != 200) {
@@ -246,6 +248,9 @@ class OpenCellIdLookup {
     );
   }
 
+  /// Table is created by DB migration v5. This method is kept for backward
+  /// compatibility only and will be removed in a future release.
+  @Deprecated('Table created by DB migration v5')
   Future<void> createCacheTable() async {
     final database = await _db.db;
     await database.execute('''
@@ -259,11 +264,4 @@ class OpenCellIdLookup {
       )
     ''');
   }
-}
-
-void debugPrint(String msg) {
-  assert(() {
-    print('[OpenCellIdLookup] $msg');
-    return true;
-  }());
 }

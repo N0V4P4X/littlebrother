@@ -12,16 +12,16 @@ class ShellScanner {
   final _controller = StreamController<List<LBSignal>>.broadcast();
   
   // Configuration for shell commands to run
-  final List<ShellCommandConfig> _commands = [
+  final List<_ShellCommandConfig> _commands = [
     // Example: ARP table scanner for local network devices
-    ShellCommandConfig(
+    _ShellCommandConfig(
       name: 'arp-scan',
       command: ['arp', '-a'],
       parser: _parseArpOutput,
       interval: Duration(seconds: 30),
     ),
     // Example: WiFi interface details (if available)
-    ShellCommandConfig(
+    _ShellCommandConfig(
       name: 'iwlist-scan',
       command: ['iwlist', 'scan'],
       parser: _parseIwlistOutput,
@@ -270,14 +270,14 @@ static double _estimateDistance(int rssi, {int txPower = LBPathLoss.defaultTxPow
 }
 
 /// Configuration for a shell command to be executed by the ShellScanner
-class ShellCommandConfig {
+class _ShellCommandConfig {
   final String name;
   final List<String> command;
   final List<LBSignal> Function(String output, String sessionId, DateTime now) parser;
   final Duration interval;
-  final bool Function()? condition; // Optional condition to check if command should run
+  final bool Function()? condition;
 
-  const ShellCommandConfig({
+  const _ShellCommandConfig({
     required this.name,
     required this.command,
     required this.parser,

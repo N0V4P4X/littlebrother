@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
@@ -24,7 +25,7 @@ class OuiLookup {
       _initCompleter!.complete();
     } catch (e) {
       debugPrint('LB_OUI failed to load OUI table: $e');
-      _table = {};
+      _table = {'__error__': ''};
       _initCompleter!.complete();
     }
   }
@@ -32,19 +33,13 @@ class OuiLookup {
   /// Resolve a MAC address (any format) to vendor name.
   /// Returns empty string if unknown.
   String resolve(String mac) {
-    if (_table == null || _table!.isEmpty) return '';
+    if (_table == null || _table!.containsKey('__error__')) return '';
     final normalized = _normalizeMac(mac);
     if (normalized.length < 6) return '';
 
     // Try 24-bit (3-byte) OUI first
     final oui24 = normalized.substring(0, 6).toUpperCase();
     if (_table!.containsKey(oui24)) return _table![oui24]!;
-
-    // Try 28-bit MA-S prefix
-    if (normalized.length >= 7) {
-      final oui28 = normalized.substring(0, 7).toUpperCase();
-      if (_table!.containsKey(oui28)) return _table![oui28]!;
-    }
 
     return '';
   }

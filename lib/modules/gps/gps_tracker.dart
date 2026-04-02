@@ -49,7 +49,19 @@ class GpsTracker {
     _isRunning = true;
 
     // Get immediate position as backup
-    _requestImmediatePosition();
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      _lastPosition = pos;
+      _lastFixTime = DateTime.now();
+      debugPrint('GPS_TRACKER: Immediate position - lat: ${pos.latitude}, lon: ${pos.longitude}, accuracy: ${pos.accuracy}m');
+    } catch (e) {
+      debugPrint('GPS_TRACKER: Immediate position failed: $e (stream may still provide updates)');
+    }
 
     _sub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
@@ -66,22 +78,6 @@ class GpsTracker {
     });
 
     return true;
-  }
-
-  Future<void> _requestImmediatePosition() async {
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 10),
-        ),
-      );
-      _lastPosition = pos;
-      _lastFixTime = DateTime.now();
-      debugPrint('GPS_TRACKER: Immediate position - lat: ${pos.latitude}, lon: ${pos.longitude}, accuracy: ${pos.accuracy}m');
-    } catch (e) {
-      debugPrint('GPS_TRACKER: Immediate position failed: $e');
-    }
   }
 
   Future<void> stop() async {

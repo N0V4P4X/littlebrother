@@ -74,10 +74,14 @@ class LBAnalyzer {
     final evidence = <String, dynamic>{};
     var score = 0;
 
+    // Fetch baseline once and reuse for both H1 and H3
+    Map<String, dynamic>? baseline;
+    if (geohash != null) {
+      baseline = await _db.getCellBaseline(geohash, serving.identifier);
+    }
+
     // H1 — Unknown Cell ID (weight 25)
     if (geohash != null) {
-      final cellKey = serving.identifier;
-      final baseline = await _db.getCellBaseline(geohash, cellKey);
       if (baseline == null) {
         evidence['unknown_cell'] = {'score': 100, 'weight': 25, 'detail': 'Cell ID never seen at this location'};
         score += 25;
@@ -97,20 +101,17 @@ class LBAnalyzer {
     }
 
     // H3 — RSSI anomaly: serving cell much stronger than baseline (weight 20)
-    if (geohash != null) {
-      final baseline = await _db.getCellBaseline(geohash, serving.identifier);
-      if (baseline != null) {
-        final avgRssi = baseline['avg_rssi'] as double;
-        final delta = serving.rssi - avgRssi;
-        if (delta > LBThresholds.rssiAnomalyDb) {
-          evidence['rssi_anomaly'] = {
-            'score': 100, 'weight': 20,
-            'detail': '${delta.toStringAsFixed(1)} dB above historical baseline',
-            'observed': serving.rssi,
-            'baseline': avgRssi,
-          };
-          score += 20;
-        }
+    if (baseline != null) {
+      final avgRssi = baseline['avg_rssi'] as double;
+      final delta = serving.rssi - avgRssi;
+      if (delta > LBThresholds.rssiAnomalyDb) {
+        evidence['rssi_anomaly'] = {
+          'score': 100, 'weight': 20,
+          'detail': '${delta.toStringAsFixed(1)} dB above historical baseline',
+          'observed': serving.rssi,
+          'baseline': avgRssi,
+        };
+        score += 20;
       }
     }
 

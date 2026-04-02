@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 import 'package:littlebrother/core/scan_coordinator.dart';
-import 'package:littlebrother/core/services/cell_cache_service.dart' hide debugPrint;
+import 'package:littlebrother/core/services/cell_cache_service.dart';
 import 'package:littlebrother/ui/radar/radar_screen.dart';
 import 'package:littlebrother/ui/screens/signal_list_screen.dart';
 import 'package:littlebrother/ui/screens/threat_log_screen.dart';

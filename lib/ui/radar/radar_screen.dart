@@ -151,7 +151,7 @@ class _RadarScreenState extends State<RadarScreen>
             style: LBTextStyles.heading.copyWith(color: LBColors.blue, fontSize: 13),
           ),
           const SizedBox(width: 8),
-          Text('v0.7.1', style: LBTextStyles.label),
+          Text('v0.7.2', style: LBTextStyles.label),
           const Spacer(),
           // Network type indicator
           _networkTypeBadge(),

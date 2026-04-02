@@ -1,0 +1,49 @@
+# LittleBrother Server Configuration
+# Copy this file to config.yaml and customize
+
+server:
+  # HTTP server port for dashboard
+  port: 8080
+  # Allowed origins for CORS (use * for all)
+  cors_origins:
+    - "*"
+
+# Mosquitto MQTT broker (optional)
+mqtt:
+  enabled: false
+  # Host where Mosquitto is running
+  host: localhost
+  # Raw data port (1883)
+  raw_port: 1883
+  # Clean data port (8883)
+  clean_port: 8883
+
+# Database settings
+database:
+  # Days to keep dirty (unvalidated) signals
+  dirty_retention_days: 7
+  # Days to keep location history
+  location_retention_days: 30
+  # Radius to fuzz locations (meters) - for privacy
+  location_fuzz_radius_m: 0
+  # Warn user when archives exceed this size (MB)
+  archive_size_warning_mb: 1024
+
+# Crowdsourced data trust defaults
+trust:
+  defaults:
+    # Local device scanning - highest trust
+    local: 1.0
+    # Pre-validated community data
+    crowdsourced_clean: 0.8
+    # Raw community data - needs validation
+    crowdsourced_dirty: 0.3
+    # MQTT feeds - disabled by default
+    mqtt: 0.0
+
+# Peer connections for LAN sync
+peers: []
+# Example peer:
+# - name: "Home Base"
+#   address: "192.168.1.100:8080"
+#   trust_level: 1

@@ -47,7 +47,7 @@ class BleScanner {
     debugPrint('LB_BLE calling startScan');
     await FlutterBluePlus.startScan(
       timeout: const Duration(days: 365),
-      continuousUpdates: true,
+      continuousUpdates: false,
       removeIfGone: const Duration(seconds: 30),
     );
     debugPrint('LB_BLE startScan returned');

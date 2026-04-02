@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -37,9 +38,26 @@ class LBDatabase {
 
   // ── Schema ───────────────────────────────────────────────────────────────
 
+  static const int _minSupportedVersion = 4; // device_waypoints introduced in v4
+
   Future<Database> _open() async {
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, LBDb.name);
+
+    // Check existing database version - delete if too old to migrate safely
+    try {
+      final db = await openDatabase(path, readOnly: true);
+      final oldVersion = await db.getVersion();
+      await db.close();
+      
+      if (oldVersion < _minSupportedVersion) {
+        debugPrint('LB_DB: Old database version $oldVersion < $_minSupportedVersion, deleting to re-create');
+        await deleteDatabase(path);
+      }
+    } catch (e) {
+      // Database doesn't exist or can't be opened - will create fresh
+      debugPrint('LB_DB: No existing database or error checking version: $e');
+    }
 
     return openDatabase(
       path,
@@ -72,6 +90,7 @@ class LBDatabase {
         risk_score    INTEGER NOT NULL,
         lat           REAL,
         lon           REAL,
+        geohash       TEXT,
         metadata_json TEXT NOT NULL,
         ts            INTEGER NOT NULL,
         threat_flag   INTEGER NOT NULL DEFAULT 0,
@@ -459,11 +478,23 @@ class LBDatabase {
   Future<void> purgeOlderThan(Duration age) async {
     final database = await db;
     final cutoff = DateTime.now().subtract(age).millisecondsSinceEpoch;
-    await database.delete(
-      LBDb.tObservations,
-      where: 'ts < ?',
-      whereArgs: [cutoff],
-    );
+    await database.transaction((txn) async {
+      await txn.delete(
+        LBDb.tObservations,
+        where: 'ts < ?',
+        whereArgs: [cutoff],
+      );
+      await txn.delete(
+        LBDb.tDeviceWaypoints,
+        where: 'last_seen < ?',
+        whereArgs: [cutoff],
+      );
+      await txn.delete(
+        LBDb.tAggregateCells,
+        where: 'most_recent < ?',
+        whereArgs: [cutoff],
+      );
+    });
   }
 
   // ── Known Devices DAO ────────────────────────────────────────────────────
@@ -472,38 +503,15 @@ class LBDatabase {
     final database = await db;
     final now = signal.timestamp.millisecondsSinceEpoch;
     
-    double? opencellidLat;
-    double? opencellidLon;
-    double? opencellidRadius;
-    int opencellidVerified = 0;
-    
-    if ((signal.signalType == LBSignalType.cell || signal.signalType == LBSignalType.cellNeighbor) &&
-        signal.identifier != 'DOWNGRADE_EVENT' &&
-        Secrets.hasOpenCellIdKey &&
-        !Secrets.privacyMode) {
-      final lookup = OpenCellIdLookup();
-      final result = await lookup.lookupCell(signal.identifier);
-      if (result != null) {
-        opencellidLat = result.position.latitude;
-        opencellidLon = result.position.longitude;
-        opencellidRadius = result.radiusMeters;
-        opencellidVerified = 1;
-      }
-    }
-    
     await database.rawInsert('''
       INSERT INTO ${LBDb.tKnownDevices}
-        (identifier, signal_type, display_name, vendor, first_seen, last_seen, observation_count, threat_flag, opencellid_lat, opencellid_lon, opencellid_radius, opencellid_verified)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        (identifier, signal_type, display_name, vendor, first_seen, last_seen, observation_count, threat_flag)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
       ON CONFLICT(identifier) DO UPDATE SET
         display_name       = excluded.display_name,
         vendor             = CASE WHEN vendor = '' THEN excluded.vendor ELSE vendor END,
         last_seen          = excluded.last_seen,
-        observation_count  = observation_count + 1,
-        opencellid_lat     = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_lat ELSE opencellid_lat END,
-        opencellid_lon     = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_lon ELSE opencellid_lon END,
-        opencellid_radius  = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_radius ELSE opencellid_radius END,
-        opencellid_verified = MAX(opencellid_verified, excluded.opencellid_verified)
+        observation_count  = observation_count + 1
     ''', [
       signal.identifier,
       signal.signalType,
@@ -511,11 +519,40 @@ class LBDatabase {
       vendor,
       now, now,
       signal.threatFlag,
-      opencellidLat,
-      opencellidLon,
-      opencellidRadius,
-      opencellidVerified,
     ]);
+  }
+
+  /// Batch-lookup OpenCellID positions for cell devices that lack verified locations.
+  /// Call this periodically (e.g. once per session) rather than per-signal.
+  Future<void> batchLookupOpenCellIdPositions({int limit = 20}) async {
+    if (!Secrets.hasOpenCellIdKey || Secrets.privacyMode) return;
+    
+    final database = await db;
+    final rows = await database.rawQuery('''
+      SELECT identifier FROM ${LBDb.tKnownDevices}
+      WHERE signal_type IN ('cell', 'cell_neighbor')
+        AND (opencellid_verified IS NULL OR opencellid_verified = 0)
+      LIMIT ?
+    ''', [limit]);
+    
+    final lookup = OpenCellIdLookup();
+    for (final row in rows) {
+      final identifier = row['identifier'] as String;
+      final result = await lookup.lookupCell(identifier);
+      if (result != null) {
+        await database.update(
+          LBDb.tKnownDevices,
+          {
+            'opencellid_lat': result.position.latitude,
+            'opencellid_lon': result.position.longitude,
+            'opencellid_radius': result.radiusMeters,
+            'opencellid_verified': 1,
+          },
+          where: 'identifier = ?',
+          whereArgs: [identifier],
+        );
+      }
+    }
   }
 
   Future<Map<String, int>> getKnownDeviceThreatFlags(List<String> identifiers) async {
@@ -827,7 +864,8 @@ class LBDatabase {
       return Map<String, dynamic>.from(
         jsonDecode(json) as Map,
       );
-    } catch (_) {
+    } catch (e) {
+      debugPrint('LB_DB: Failed to parse metadata JSON: $e');
       return {};
     }
   }
@@ -1105,9 +1143,8 @@ class LBDatabase {
         AND lat > -90 AND lat < 90 AND lon > -180 AND lon < 180
     ''');
     
-    debugPrint('LB_DB: Found $waypointCount waypoints to merge');
+    debugPrint('LB_DB: Found ${waypoints.length} waypoints to merge');
     
-    int mergedCount = 0;
     await database.transaction((txn) async {
       for (final wp in waypoints) {
         try {
@@ -1147,7 +1184,6 @@ class LBDatabase {
           (wp['signal_type'] == 'cell' || wp['signal_type'] == 'cell_neighbor') ? 1 : 0,
           wp['last_seen'],
         ]);
-        mergedCount++;
         } catch (e) {
           // Skip individual insert failures
         }

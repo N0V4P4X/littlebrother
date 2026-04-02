@@ -34,20 +34,34 @@ class LBSignal {
   });
 
   factory LBSignal.fromMap(Map<String, dynamic> m) => LBSignal(
-    id:          m['id'] as String,
-    sessionId:   m['session_id'] as String,
-    signalType:  m['signal_type'] as String,
-    identifier:  m['identifier'] as String,
-    displayName: m['display_name'] as String,
-    rssi:        m['rssi'] as int,
-    distanceM:   (m['distance_m'] as num).toDouble(),
-    riskScore:   m['risk_score'] as int,
+    id:          m['id'] as String? ?? '',
+    sessionId:   m['session_id'] as String? ?? '',
+    signalType:  m['signal_type'] as String? ?? '',
+    identifier:  m['identifier'] as String? ?? '',
+    displayName: m['display_name'] as String? ?? '',
+    rssi:        (m['rssi'] as num?)?.toInt() ?? -100,
+    distanceM:   (m['distance_m'] as num?)?.toDouble() ?? -1.0,
+    riskScore:   (m['risk_score'] as num?)?.toInt() ?? 0,
     lat:         (m['lat'] as num?)?.toDouble(),
     lon:         (m['lon'] as num?)?.toDouble(),
-    metadata:    jsonDecode(m['metadata_json'] as String) as Map<String, dynamic>,
-    timestamp:   DateTime.fromMillisecondsSinceEpoch(m['ts'] as int),
-    threatFlag:  m['threat_flag'] as int? ?? LBThreatFlag.clean,
+    metadata:    _safeJsonDecode(m['metadata_json']),
+    timestamp:   m['ts'] != null
+        ? DateTime.fromMillisecondsSinceEpoch((m['ts'] as num).toInt())
+        : DateTime.now(),
+    threatFlag:  (m['threat_flag'] as num?)?.toInt() ?? LBThreatFlag.clean,
   );
+
+  static Map<String, dynamic> _safeJsonDecode(dynamic value) {
+    if (value == null) return {};
+    if (value is String) {
+      try {
+        return jsonDecode(value) as Map<String, dynamic>;
+      } catch (_) {
+        return {};
+      }
+    }
+    return {};
+  }
 
   Map<String, dynamic> toMap() => {
     'id':            id,
@@ -71,6 +85,7 @@ class LBSignal {
     double? lat,
     double? lon,
     double? distanceM,
+    Map<String, dynamic>? metadata,
   }) => LBSignal(
     id:          id,
     sessionId:   sessionId,
@@ -82,7 +97,7 @@ class LBSignal {
     riskScore:   riskScore ?? this.riskScore,
     lat:         lat ?? this.lat,
     lon:         lon ?? this.lon,
-    metadata:    metadata,
+    metadata:    metadata ?? Map<String, dynamic>.from(this.metadata),
     timestamp:   timestamp,
     threatFlag:  threatFlag ?? this.threatFlag,
   );
@@ -118,15 +133,29 @@ class LBThreatEvent {
 
   factory LBThreatEvent.fromMap(Map<String, dynamic> m) => LBThreatEvent(
     id:          m['id'] as int?,
-    threatType:  m['threat_type'] as String,
-    severity:    m['severity'] as int,
-    identifier:  m['identifier'] as String,
-    evidence:    jsonDecode(m['evidence_json'] as String) as Map<String, dynamic>,
+    threatType:  m['threat_type'] as String? ?? 'unknown',
+    severity:    (m['severity'] as num?)?.toInt() ?? 0,
+    identifier:  m['identifier'] as String? ?? '',
+    evidence:    _safeEvidenceDecode(m['evidence_json']),
     lat:         m['lat'] != null ? (m['lat'] as num).toDouble() : null,
     lon:         m['lon'] != null ? (m['lon'] as num).toDouble() : null,
-    timestamp:   DateTime.fromMillisecondsSinceEpoch(m['ts'] as int),
+    timestamp:   m['ts'] != null
+        ? DateTime.fromMillisecondsSinceEpoch((m['ts'] as num).toInt())
+        : DateTime.now(),
     dismissed:   (m['dismissed'] as int?) == 1,
   );
+
+  static Map<String, dynamic> _safeEvidenceDecode(dynamic value) {
+    if (value == null) return {};
+    if (value is String) {
+      try {
+        return jsonDecode(value) as Map<String, dynamic>;
+      } catch (_) {
+        return {'raw': value.toString()};
+      }
+    }
+    return {};
+  }
 
   Map<String, dynamic> toMap() => {
     if (id != null) 'id': id,

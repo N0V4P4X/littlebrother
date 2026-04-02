@@ -82,7 +82,13 @@ class ScanCoordinator {
   StreamSubscription<List<LBSignal>>? _bleSub;
   StreamSubscription<List<LBSignal>>? _cellSub;
 
+  bool _initialized = false;
+
   Future<void> init() async {
+    if (_initialized) {
+      stderr.write('LB_COORD: already initialized, skipping\n');
+      return;
+    }
     stderr.write('LB_COORD: init start (${LBPlatform.name})\n');
     debugPrint('LB_COORD init start (${LBPlatform.name})');
     await OuiLookup.instance.init();
@@ -143,6 +149,7 @@ class ScanCoordinator {
 
     stderr.write('LB_COORD: init complete\n');
     debugPrint('LB_COORD init complete');
+    _initialized = true;
   }
 
   Future<bool> _waitForGps({int timeoutSeconds = 90}) async {
@@ -191,10 +198,15 @@ class ScanCoordinator {
     _cellSub?.cancel();
     _threatCount = 0;
     _latestSignals.clear();
+    _signalQueue.clear();
+    _drainingQueue = false;
+    
+    // Set session ID BEFORE the try block so stopScan() can safely reference it
+    // even if an error occurs during startup
+    _sessionId = _uuid.v4();
+    _sessionStartTime = DateTime.now();
     
     try {
-      _sessionId = _uuid.v4();
-      _sessionStartTime = DateTime.now();
       stderr.write('LB_COORD: startScan session=$_sessionId\n');
       debugPrint('LB_COORD startScan session=$_sessionId');
 
@@ -209,7 +221,6 @@ class ScanCoordinator {
       debugPrint('LB_COORD subscribing to wifi stream');
       _wifiSub = _wifi.stream.listen(
         (List<LBSignal> signals) {
-          stderr.write('LB_COORD: wifi batch: ${signals.length} signals\n');
           debugPrint('LB_COORD wifi batch: ${signals.length} signals');
           _onSignals(signals);
         },
@@ -227,7 +238,6 @@ class ScanCoordinator {
       debugPrint('LB_COORD subscribing to ble stream');
       _bleSub = _ble.stream.listen(
         (List<LBSignal> signals) {
-          stderr.write('LB_COORD: ble batch: ${signals.length} signals\n');
           debugPrint('LB_COORD ble batch: ${signals.length} signals');
           _onSignals(signals);
         },
@@ -256,21 +266,20 @@ class ScanCoordinator {
       if (LBPlatform.supportsCellScanning) {
         stderr.write('LB_COORD: starting cell scanner\n');
         debugPrint('LB_COORD starting cell scanner');
-      _cellSub = _cell.stream.listen(
-        (List<LBSignal> signals) {
-          stderr.write('LB_COORD: cell batch: ${signals.length} signals\n');
-          debugPrint('LB_COORD cell batch: ${signals.length} signals');
-          _onSignals(signals);
-        },
-        onError: (e) {
-          stderr.write('LB_COORD: cell stream error: $e\n');
-          debugPrint('LB_COORD: cell stream error: $e');
-        },
-        onDone: () {
-          stderr.write('LB_COORD: cell stream done\n');
-          debugPrint('LB_COORD cell stream done');
-        }
-      );
+        _cellSub = _cell.stream.listen(
+          (List<LBSignal> signals) {
+            debugPrint('LB_COORD cell batch: ${signals.length} signals');
+            _onSignals(signals);
+          },
+          onError: (e) {
+            stderr.write('LB_COORD: cell stream error: $e\n');
+            debugPrint('LB_COORD: cell stream error: $e');
+          },
+          onDone: () {
+            stderr.write('LB_COORD: cell stream done\n');
+            debugPrint('LB_COORD cell stream done');
+          }
+        );
         await _cell.start(_sessionId!);
         stderr.write('LB_COORD: cell scanner started, isRunning=${_cell.isRunning}\n');
         debugPrint('LB_COORD cell scanner started, isRunning=${_cell.isRunning}');
@@ -283,11 +292,6 @@ class ScanCoordinator {
       stderr.write('LB_COORD: starting shell scanner\n');
       await _shell.start(_sessionId!);
       stderr.write('LB_COORD: shell scanner started\n');
-
-      // Start MQTT Scanner (only if we want to enable it - for now comment out to avoid connection issues during testing)
-      // stderr.write('LB_COORD: starting MQTT scanner\n');
-      // await _mqtt.start(_sessionId!);
-      // stderr.write('LB_COORD: MQTT scanner started\n');
 
       // Start Bluetooth Classic Scanner (Linux only)
       if (Platform.isLinux) {
@@ -306,10 +310,17 @@ class ScanCoordinator {
       }
       
       stderr.write('LB_COORD: startScan completed successfully\n');
-  } catch (e, st) {
-    stderr.write('LB_COORD: startScan ERROR: $e\n$st\n');
-    debugPrint('LB_COORD startScan ERROR: $e\n$st');
-  }
+    } catch (e, st) {
+      stderr.write('LB_COORD: startScan ERROR: $e\n$st\n');
+      debugPrint('LB_COORD startScan ERROR: $e\n$st');
+      // Rollback: clear session so stopScan won't try to update a partial session
+      _sessionId = null;
+      _sessionStartTime = null;
+      _wifiSub?.cancel();
+      _bleSub?.cancel();
+      _cellSub?.cancel();
+      rethrow;
+    }
   }
 
   Future<void> stopScan() async {
@@ -375,113 +386,114 @@ class ScanCoordinator {
   }
 
   Future<void> _drainSignalQueue() async {
-    if (_drainingQueue) return; // drain loop already running
+    if (_drainingQueue) return;
     _drainingQueue = true;
     try {
       while (_signalQueue.isNotEmpty) {
         final batch = _signalQueue.removeFirst();
-        await _processBatch(batch);
+        final sessionAtStart = _sessionId;
+        if (sessionAtStart == null) {
+          _signalQueue.clear();
+          break;
+        }
+        await _processBatch(batch, sessionAtStart);
       }
     } finally {
       _drainingQueue = false;
     }
   }
 
-  Future<void> _processBatch(List<LBSignal> signals) async {
-      if (_sessionId == null) return;
-      try {
-        stderr.write('LB_COORD: _onSignals processing ${signals.length} signals\n');
-        debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
+  Future<void> _processBatch(List<LBSignal> signals, String sessionId) async {
+    try {
+      debugPrint('LB_COORD _onSignals processing ${signals.length} signals');
 
-        // Stamp GPS onto each signal
-        final geotagged = signals.map((s) {
-          if (_gps.hasFreshFix && _gps.lastPosition != null) {
-            final pos = _gps.lastPosition!;
-            final stamped = s.copyWith(
-              lat: pos.latitude,
-              lon: pos.longitude,
-            );
-            // Store GPS accuracy for deduplication logic
-            stamped.metadata['gps_accuracy'] = pos.accuracy;
-            if (_gps.currentGeohash != null) {
-              stamped.metadata['geohash'] = _gps.currentGeohash!;
-            }
-            return stamped;
+      // Stamp GPS onto each signal
+      final geotagged = signals.map((s) {
+        if (_gps.hasFreshFix && _gps.lastPosition != null) {
+          final pos = _gps.lastPosition!;
+          final stamped = s.copyWith(
+            lat: pos.latitude,
+            lon: pos.longitude,
+          );
+          // Store GPS accuracy for deduplication logic
+          stamped.metadata['gps_accuracy'] = pos.accuracy;
+          if (_gps.currentGeohash != null) {
+            stamped.metadata['geohash'] = _gps.currentGeohash!;
           }
-          return s;
-        }).toList();
-
-        // Update latest cache
-        for (final s in geotagged) {
-          if (s.identifier != 'DOWNGRADE_EVENT') {
-            _latestSignals[s.identifier] = s;
-          }
+          return stamped;
         }
-        _pruneSignalsCache();
+        return s;
+      }).toList();
 
-        stderr.write('LB_COORD: cache updated, now tracking ${_latestSignals.length} unique signals\n');
-
-        // Update network type display
-        final cell = geotagged.where((s) =>
-            s.signalType == LBSignalType.cell &&
-            s.metadata['is_serving'] == true).firstOrNull;
-        if (cell != null) {
-          final nt = cell.metadata['network_type_name'] as String?;
-          if (nt != null) _currentNetworkType = nt;
-        } else {
-          _currentNetworkType = '---';
+      // Update latest cache
+      for (final s in geotagged) {
+        if (s.identifier != 'DOWNGRADE_EVENT') {
+          _latestSignals[s.identifier] = s;
         }
-
-        // Persist batch
-        await _db.insertObservationBatch(geotagged);
-        stderr.write('LB_COORD: persisted ${geotagged.length} signals to DB\n');
-
-        // Update cell baselines
-        for (final s in geotagged) {
-          if ((s.signalType == LBSignalType.cell || s.signalType == LBSignalType.cellNeighbor) &&
-              s.identifier != 'DOWNGRADE_EVENT' &&
-              _gps.currentGeohash != null) {
-            await _db.upsertCellBaseline(
-              geohash:     _gps.currentGeohash!,
-              cellKey:     s.identifier,
-              networkType: s.metadata['type'] as String? ?? 'UNKNOWN',
-              rssi:        s.rssi,
-            );
-          }
-        }
-
-        // Update known devices
-        for (final s in geotagged) {
-          if (s.identifier != 'DOWNGRADE_EVENT') {
-            final vendor = s.metadata['vendor'] as String? ?? '';
-            await _db.upsertKnownDevice(s, vendor);
-          }
-        }
-
-        // Run analyzer
-        final threats = await _analyzer.analyze(
-          geotagged,
-          geohash: _gps.currentGeohash,
-          servingCellChangesPerMinute: LBPlatform.supportsCellScanning
-              ? _cell.servingCellChangesPerMinute() : 0,
-          tacChangesPerMinute: LBPlatform.supportsCellScanning
-              ? _cell.tacChangesPerMinute() : 0,
-          neighborInstabilityScore: LBPlatform.supportsCellScanning
-              ? _cell.neighborInstabilityScore() : 0,
-        );
-        if (threats.isNotEmpty) {
-          await _alerts.handleThreatEvents(threats);
-        }
-
-        // Broadcast to UI
-        if (!_signalCtrl.isClosed) {
-          _signalCtrl.add(geotagged);
-        }
-      } catch (e, st) {
-        stderr.write('LB_COORD: _processBatch error: $e\n$st\n');
-        debugPrint('LB_COORD _processBatch error: $e\n$st');
       }
+      _pruneSignalsCache();
+
+      // Update network type display
+      final cell = geotagged.where((s) =>
+          s.signalType == LBSignalType.cell &&
+          s.metadata['is_serving'] == true).firstOrNull;
+      if (cell != null) {
+        final nt = cell.metadata['network_type_name'] as String?;
+        if (nt != null) _currentNetworkType = nt;
+      } else {
+        _currentNetworkType = '---';
+      }
+
+      // Persist batch
+      await _db.insertObservationBatch(geotagged);
+      stderr.write('LB_COORD: persisted ${geotagged.length} signals to DB\n');
+
+      // Update cell baselines
+      for (final s in geotagged) {
+        if ((s.signalType == LBSignalType.cell || s.signalType == LBSignalType.cellNeighbor) &&
+            s.identifier != 'DOWNGRADE_EVENT' &&
+            _gps.currentGeohash != null) {
+          await _db.upsertCellBaseline(
+            geohash:     _gps.currentGeohash!,
+            cellKey:     s.identifier,
+            networkType: s.metadata['type'] as String? ?? 'UNKNOWN',
+            rssi:        s.rssi,
+          );
+        }
+      }
+
+      // Update known devices (skip downgrade events)
+      for (final s in geotagged) {
+        if (s.identifier != 'DOWNGRADE_EVENT') {
+          final vendor = s.metadata['vendor'] as String? ?? '';
+          await _db.upsertKnownDevice(s, vendor);
+        }
+      }
+
+      // Run analyzer
+      final threats = await _analyzer.analyze(
+        geotagged,
+        geohash: _gps.currentGeohash,
+        servingCellChangesPerMinute: LBPlatform.supportsCellScanning
+            ? _cell.servingCellChangesPerMinute() : 0,
+        tacChangesPerMinute: LBPlatform.supportsCellScanning
+            ? _cell.tacChangesPerMinute() : 0,
+        neighborInstabilityScore: LBPlatform.supportsCellScanning
+            ? _cell.neighborInstabilityScore() : 0,
+      );
+      if (threats.isNotEmpty) {
+        await _alerts.handleThreatEvents(threats);
+      }
+
+      // Broadcast to UI
+      if (!_signalCtrl.isClosed) {
+        _signalCtrl.add(geotagged);
+      }
+    } catch (e, st) {
+      stderr.write('LB_COORD: _processBatch error: $e\n$st\n');
+      debugPrint('LB_COORD _processBatch error: $e\n$st');
     }
+  }
   
   void setOpsecAutoEnabled(bool enabled) {
     _alerts.opsecAutoEnabled = enabled;

@@ -3,7 +3,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/models/lb_aggregate_map.dart';
-import 'package:littlebrother/core/constants/lb_constants.dart' show SignalPoint;
 
 class LBMapView extends StatefulWidget {
   final LatLng? initialCenter;
@@ -127,14 +126,6 @@ class _LBMapViewState extends State<LBMapView> {
       });
       debugPrint('LBMapView: switched to ${_tileProviders[_currentProvider].$1}');
     }
-  }
-
-  void _onTileLoad() {
-    debugPrint('LBMapView: tiles loaded successfully');
-    setState(() {
-      _tilesLoaded = true;
-      _loadingTiles = false;
-    });
   }
 
   void _cycleProvider() {
@@ -352,28 +343,6 @@ class _LBMapViewState extends State<LBMapView> {
     );
   }
 
-  Widget _legendRow(Color color, String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.8),
-              shape: BoxShape.circle,
-              border: Border.all(color: color, width: 1),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
-        ],
-      ),
-    );
-  }
-
   List<Polygon> _buildGridPolygons() {
     final cells = widget.gridCells;
     if (cells.isEmpty) return [];
@@ -504,55 +473,8 @@ class _LBMapViewState extends State<LBMapView> {
     };
   }
 
-  ({double lat, double lon}) _decodeGeohash(String geohash) {
-    if (geohash.isEmpty) return (lat: 0.0, lon: 0.0);
-    final bounds = _geohashBounds(geohash);
-    final minLat = bounds['minLat'];
-    final maxLat = bounds['maxLat'];
-    final minLon = bounds['minLon'];
-    final maxLon = bounds['maxLon'];
-    if (minLat == null || maxLat == null || minLon == null || maxLon == null) {
-      return (lat: 0.0, lon: 0.0);
-    }
-    if (minLat.isNaN || maxLat.isNaN || minLon.isNaN || maxLon.isNaN) {
-      return (lat: 0.0, lon: 0.0);
-    }
-    return (
-      lat: (minLat + maxLat) / 2,
-      lon: (minLon + maxLon) / 2,
-    );
-  }
-
-  AggregateCell? _findCellAtPoint(LatLng point) {
-    for (final cell in widget.gridCells) {
-      final bounds = _geohashBounds(cell.geohash);
-      final minLat = bounds['minLat'];
-      final maxLat = bounds['maxLat'];
-      final minLon = bounds['minLon'];
-      final maxLon = bounds['maxLon'];
-      if (minLat == null || maxLat == null || minLon == null || maxLon == null) continue;
-      if (minLat.isNaN || maxLat.isNaN || minLon.isNaN || maxLon.isNaN) continue;
-      
-      if (point.latitude >= minLat &&
-          point.latitude <= maxLat &&
-          point.longitude >= minLon &&
-          point.longitude <= maxLon) {
-        return cell;
-      }
-    }
-    return null;
-  }
-
   List<Marker> _buildClusteredMarkers() {
     if (!widget.enableClustering || widget.markers.isEmpty) {
-      return widget.markers;
-    }
-
-    // Check if map is ready - if not, return markers as-is
-    try {
-      final zoom = _mapController.camera.zoom;
-    } catch (e) {
-      // Map not ready yet, return unmapped markers
       return widget.markers;
     }
 

@@ -46,6 +46,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
   }
 
+  String _csvEscape(String value) => '"${value.replaceAll('"', '""')}"';
+
   Future<void> _exportSession(LBSession session) async {
     final db = LBDatabase.instance;
     final observations = await db.getObservationsBySession(session.id);
@@ -55,15 +57,15 @@ class _TimelineScreenState extends State<TimelineScreen> {
     
     for (final o in observations) {
       buffer.writeln([
-        o.signalType,
-        o.identifier,
-        '"${o.displayName.replaceAll('"', '""')}"',
+        _csvEscape(o.signalType),
+        _csvEscape(o.identifier),
+        _csvEscape(o.displayName),
         o.rssi,
         o.distanceM.toStringAsFixed(2),
         o.riskScore,
         o.lat?.toStringAsFixed(6) ?? '',
         o.lon?.toStringAsFixed(6) ?? '',
-        o.timestamp.toIso8601String(),
+        _csvEscape(o.timestamp.toIso8601String()),
       ].join(','));
     }
     
@@ -91,13 +93,13 @@ class _TimelineScreenState extends State<TimelineScreen> {
     
     for (final t in _recentThreats) {
       buffer.writeln([
-        t.threatType,
-        t.severityLabel,
-        '"${t.identifier}"',
+        _csvEscape(t.threatType),
+        _csvEscape(t.severityLabel),
+        _csvEscape(t.identifier),
         t.lat?.toStringAsFixed(6) ?? '',
         t.lon?.toStringAsFixed(6) ?? '',
-        t.timestamp.toIso8601String(),
-        '"${t.evidence.toString().replaceAll('"', '""')}"',
+        _csvEscape(t.timestamp.toIso8601String()),
+        _csvEscape(t.evidence.toString()),
       ].join(','));
     }
     

@@ -13,17 +13,12 @@ class MqttScanner {
   final _uuid = const Uuid();
   MqttServerClient? _client;
   final _controller = StreamController<List<LBSignal>>.broadcast();
-   
+    
    // Configuration
-   // ignore: unused_field
    final String _brokerUrl;
-   // ignore: unused_field
    final int _port;
-   // ignore: unused_field
    final String _username;
-   // ignore: unused_field
    final String _password;
-   // ignore: unused_field
    final String _clientId;
    final List<String> _topics; // Topics to subscribe to
    
@@ -32,7 +27,7 @@ class MqttScanner {
    
    MqttScanner({
      required String brokerUrl,
-     int port = 1883,
+     int port = 8883,
      String username = '',
      String password = '',
      String? clientId,
@@ -55,12 +50,26 @@ class MqttScanner {
      _client = MqttServerClient(_brokerUrl, _clientId);
      _client!.port = _port;
      _client!.keepAlivePeriod = 20;
-     _client!.secure = false; // Set to true if using TLS
+     _client!.secure = _port == 8883;
+     if (_client!.secure) {
+       _client!.securityContext = SecurityContext.defaultContext;
+     }
      _client!.logging(on: false);
      
      // Authentication
      if (_username.isNotEmpty) {
-       // Username/password are handled in the connect method
+       final connMess = MqttConnectMessage()
+           .withClientIdentifier(_clientId)
+           .withWillQos(MqttQos.atLeastOnce)
+           .startClean()
+           .withWillTopic('lb/status')
+           .withWillMessage('offline')
+           .authenticateAs(_username, _password);
+       _client!.connectionMessage = connMess;
+     } else {
+       _client!.connectionMessage = MqttConnectMessage()
+           .withClientIdentifier(_clientId)
+           .startClean();
      }
      
      // Connection handler - assign available callbacks

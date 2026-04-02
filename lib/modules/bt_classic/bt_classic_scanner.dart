@@ -47,18 +47,11 @@ class BtClassicScanner {
       
       // Ensure adapter is powered on.
       // Do NOT enable discoverable — that would emit RF and expose the device.
+      // Do NOT use 'bluetoothctl scan on' — that actively transmits inquiry packets.
+      // Instead, read the adapter's cached device table (passive).
       await Process.run('bluetoothctl', ['power', 'on']);
       
-      // Start scanning
-      await Process.run('bluetoothctl', ['scan', 'on']);
-      
-      // Wait a bit for devices to be discovered
-      await Future.delayed(const Duration(seconds: 10));
-      
-      // Stop scanning
-      await Process.run('bluetoothctl', ['scan', 'off']);
-      
-      // Get list of devices
+      // Get list of devices from the adapter's cache (passive — no RF emission)
       final result = await Process.run('bluetoothctl', ['devices']);
       
       if (result.exitCode != 0) {

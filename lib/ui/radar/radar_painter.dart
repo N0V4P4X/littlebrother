@@ -294,6 +294,8 @@ class RadarPainter extends CustomPainter {
     return 3.0 + norm * 5.0;
   }
 
+  static final Map<String, TextPainter> _textPainterCache = {};
+
   void _drawText(
     Canvas canvas,
     String text,
@@ -301,18 +303,21 @@ class RadarPainter extends CustomPainter {
     Color color,
     double fontSize,
   ) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontFamily: 'Courier New',
-          color: color,
-          fontSize: fontSize,
-          letterSpacing: 0.5,
+    final cacheKey = '$text|$color|$fontSize';
+    final tp = _textPainterCache.putIfAbsent(cacheKey, () {
+      return TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            fontFamily: 'Courier New',
+            color: color,
+            fontSize: fontSize,
+            letterSpacing: 0.5,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+        textDirection: TextDirection.ltr,
+      )..layout();
+    });
     tp.paint(canvas, offset);
   }
 

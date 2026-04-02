@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4] - 2026-04-02
+
+### Server (NEW)
+- **LittleBrother Server** — new desktop application for LAN control and crowdsourced data handling
+- System tray integration with status indicator
+- HTTP dashboard (port 8080) accessible from any LAN device
+- SQLite database with clean/dirty signal separation
+- Peer management for LAN sync
+- Mosquitto MQTT integration (optional, disabled by default)
+
+### Database
+- **Safe database migration** — checks existing DB version and only deletes if < v4 (pre-device_waypoints), otherwise uses normal migration (`lib/core/db/lb_database.dart`)
+
+## [0.7.2] - 2026-04-02
+
+### Critical Fixes
+- **`Secrets.privacyMode` was `const`** — compile error on map screen privacy toggle; changed to mutable `static bool` (`lib/core/secrets.dart`)
+- **`startScan()` session ID set inside try block** — NPE in `stopScan()` on error path; moved before try block with rollback on failure (`lib/core/scan_coordinator.dart`)
+- **`LBSignal.copyWith` shared metadata Map reference** — GPS stamping mutated original signal's metadata; now creates a copy via `Map.from()` (`lib/core/models/lb_signal.dart`)
+- **`BtClassicScanner` used `bluetoothctl scan on`** — active RF emission contradicting passive-only design; now reads cached device table only (`lib/modules/bt_classic/bt_classic_scanner.dart`)
+- **MQTT scanner used plaintext TCP (port 1883)** — now defaults to TLS on port 8883 with proper `SecurityContext` and connection message (`lib/modules/mqtt/mqtt_scanner.dart`)
+
+### High Fixes
+- **OpenCellID API key logged in debug output** — URI containing key replaced with redacted message (`lib/core/services/cell_id_lookup.dart`)
+- **OpenCellID HTTP lookup inside per-signal DB loop** — caused massive queue backpressure; removed from `upsertKnownDevice`, replaced with `batchLookupOpenCellIdPositions()` (`lib/core/db/lb_database.dart`)
+- **`_processBatch` processed signals after session ended** — created orphaned observations; drain loop now captures session ID before each batch (`lib/core/scan_coordinator.dart`)
+- **BLE `continuousUpdates: true`** — excessive battery drain; changed to `false` (`lib/modules/ble/ble_scanner.dart`)
+- **WiFi nudge timer race with `stop()`** — async callback could fire after subscription cancelled; made callback synchronous (`lib/modules/wifi/wifi_scanner_android.dart`)
+
+### Medium Fixes
+- **`LBSignal.fromMap` no null-safety guards** — added safe defaults for all fields (`lib/core/models/lb_signal.dart`)
+- **`LBThreatEvent.fromMap` crashed on malformed evidence_json** — added `_safeEvidenceDecode` wrapper (`lib/core/models/lb_signal.dart`)
+- **nmcli parsing fragile with colons in SSID** — reads FREQ column directly, validates BSSID first (`lib/modules/wifi/wifi_scanner_linux.dart`)
+- **`_parseJson` silently swallowed errors** — now logs failures via `debugPrint` (`lib/core/db/lb_database.dart`)
+- **CDMA cell parsing used same field for LAC and CID** — now extracts NID and BID from separate fields (`lib/core/services/cell_id_lookup.dart`)
+- **`_onCreate` missing `geohash` column** — fresh installs crashed on observation insert; added to schema (`lib/core/db/lb_database.dart`)
+- **Visited regions used geohash bounds instead of waypoint bounds** — caused unnecessary cell loading; now uses accumulated waypoint bounds (`lib/core/services/cell_cache_service.dart`)
+- **`purgeOlderThan` only cleaned observations** — now also purges device waypoints and aggregate cells in a transaction (`lib/core/db/lb_database.dart`)
+- **`_analyzeStingray` queried DB twice for same baseline** — now fetches once and reuses (`lib/analyzer/lb_analyzer.dart`)
+- **CSV export didn't escape all fields** — added `_csvEscape()` helper for all string fields (`lib/ui/screens/timeline_screen.dart`)
+- **GPS timer leaked on map screen** — timer handle assigned inside callback, losing first reference; now stored immediately (`lib/ui/screens/aggregate_map_screen.dart`)
+
+### Low Fixes / Cleanup
+- **Dead code removed**: `_onTileLoad`, `_legendRow`, `_decodeGeohash`, `_findCellAtPoint` in `lb_map_view.dart`
+- **`_tileProviderIndex` made `final`** — was never reassigned (`lib/ui/screens/aggregate_map_screen.dart`)
+- **`createCacheTable()` deprecated** — table created by DB migration v5 (`lib/core/services/cell_id_lookup.dart`)
+- **`cell_scanner_android` stop() now closes controller** — prevents resource leak (`lib/modules/cell/cell_scanner_android.dart`)
+- **FSPL formula corrected** — replaced hacky `-30` term with proper `-147.55` constant (`lib/core/services/cell_cache_service.dart`)
+- **Version string updated** to `v0.7.2` (`lib/ui/radar/radar_screen.dart`)
+
 ## [0.7.1] - 2026-04-02
 
 ### Fixed (Round 6 — external code review, first pass)

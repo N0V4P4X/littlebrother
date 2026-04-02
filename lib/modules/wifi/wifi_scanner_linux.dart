@@ -54,13 +54,13 @@ class WifiScanner {
       for (final line in lines) {
         final parts = line.split(':');
         if (parts.length < 6) continue;
-        final ssid = parts[0];
         final bssid = parts[1];
+        if (bssid.isEmpty || bssid == '--') continue;
         final signal = int.tryParse(parts[2]) ?? -100;
         final channel = int.tryParse(parts[3]) ?? -1;
-        final freq = _channelToFreq(channel);
+        final freq = int.tryParse(parts[4]) ?? _channelToFreq(channel);
         final security = parts.sublist(5).join(':');
-        if (bssid.isEmpty || bssid == '--') continue;
+        final ssid = parts[0];
         final ap = _NmcliAccessPoint(ssid: ssid, bssid: bssid, signal: signal, channel: channel, freq: freq, security: security);
         signals.add(_normalize(ap, sessionId, now));
       }
@@ -77,9 +77,8 @@ class WifiScanner {
   int _channelToFreq(int channel) {
     if (channel >= 1 && channel <= 13) return 2407 + channel * 5;
     if (channel == 14) return 2484;
-    if (channel >= 36 && channel <= 64) return 5000 + channel * 5;
-    if (channel >= 100 && channel <= 144) return 5000 + channel * 5;
-    if (channel >= 149 && channel <= 165) return 5000 + channel * 5;
+    if (channel >= 36 && channel <= 177) return 5000 + channel * 5;
+    if (channel >= 181 && channel <= 253) return 5955 + (channel - 181) * 5;
     return 0;
   }
 
@@ -142,7 +141,8 @@ class WifiScanner {
 
   String _bandFromChannel(int channel) {
     if (channel >= 1 && channel <= 13) return '2.4GHz';
-    if (channel >= 36) return '5GHz';
+    if (channel >= 36 && channel <= 177) return '5GHz';
+    if (channel >= 181) return '6GHz';
     return 'UNKNOWN';
   }
 
