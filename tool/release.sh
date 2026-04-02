@@ -16,36 +16,27 @@ FINAL_TARBALL="$PROJECT_DIR/littlebrother_${VERSION}_${ARCH}.tar.gz"
 
 echo "Packaging LittleBrother v${VERSION} for ${ARCH}..."
 
-tar --exclude='.git' \
-    --exclude='build/' \
-    --exclude='.dart_tool/' \
-    --exclude='.gradle/' \
-    --exclude='.idea/' \
-    --exclude='.vscode/' \
-    --exclude='*.iml' \
-    --exclude='android/app/build/' \
-    --exclude='android/build/' \
-    --exclude='android/.gradle/' \
-    --exclude='linux/build/' \
-    --exclude='linux/.dart_tool/' \
-    --exclude='linux/CMakeFiles/' \
-    --exclude='linux/cmake_build/' \
-    --exclude='macos/Flutter/ephemeral/' \
-    --exclude='macos/Runner.xcworkspace/' \
-    --exclude='macos/Runner.xcodeproj/' \
-    --exclude='macos/RunnerTests/' \
-    --exclude='windows/' \
-    --exclude='ios/' \
-    --exclude='*.apk' \
-    --exclude='*.aab' \
-    --exclude='*.lock' \
-    --exclude='pubspec.lock' \
-    --exclude='.packages' \
-    --exclude='.flutter-plugins' \
-    --exclude='.flutter-plugins-dependencies' \
-    --exclude='test/' \
-    --exclude='.github/' \
-    -czf "$TEMP_TARBALL" -C "$PROJECT_DIR" .
+# Build exclude flags from .gitignore + additional platform builds
+EXCLUDES="--exclude=.git"
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    # Convert .gitignore patterns to tar --exclude patterns
+    if [[ "$line" == *"/" ]]; then
+        EXCLUDES="$EXCLUDES --exclude=${line%/}"
+    else
+        EXCLUDES="$EXCLUDES --exclude=$line"
+    fi
+done < "$PROJECT_DIR/.gitignore"
+
+# Add additional platform-specific excludes not in .gitignore
+EXCLUDES="$EXCLUDES --exclude=linux/CMakeFiles --exclude=linux/cmake_build"
+EXCLUDES="$EXCLUDES --exclude=linux/flutter --exclude=linux/.dart_tool"
+EXCLUDES="$EXCLUDES --exclude=macos/Flutter/ephemeral --exclude=macos/Runner.xcworkspace"
+EXCLUDES="$EXCLUDES --exclude=macos/Runner.xcodeproj --exclude=macos/RunnerTests"
+EXCLUDES="$EXCLUDES --exclude=windows --exclude=ios"
+EXCLUDES="$EXCLUDES --exclude=.github --exclude=test"
+
+tar $EXCLUDES -czf "$TEMP_TARBALL" -C "$PROJECT_DIR" .
 
 mv "$TEMP_TARBALL" "$FINAL_TARBALL"
 
