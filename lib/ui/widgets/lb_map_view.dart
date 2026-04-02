@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/models/lb_aggregate_map.dart';
+import 'package:littlebrother/core/constants/lb_constants.dart' show SignalPoint;
 
 class LBMapView extends StatefulWidget {
   final LatLng? initialCenter;
@@ -24,6 +25,7 @@ class LBMapView extends StatefulWidget {
   final bool autoPrecision;
   final Function(int)? onPrecisionChanged;
   final Function(int)? onZoomChanged;
+  final Map<String, List<SignalPoint>>? signalTrails;
 
   const LBMapView({
     super.key,
@@ -46,6 +48,7 @@ class LBMapView extends StatefulWidget {
     this.autoPrecision = true,
     this.onPrecisionChanged,
     this.onZoomChanged,
+    this.signalTrails,
   });
 
   @override
@@ -54,11 +57,17 @@ class LBMapView extends StatefulWidget {
 
 class _LBMapViewState extends State<LBMapView> {
   late final MapController _mapController;
-  int _currentProvider = 1; // Default to CartoDB Voyager (more reliable)
+  int _currentProvider = 1;
   int _errorCount = 0;
   bool _tilesLoaded = false;
   bool _loadingTiles = true;
   int _currentPrecision = 7;
+  
+  bool _isRebuilding = false;
+
+  void setRebuilding(bool value) {
+    _isRebuilding = value;
+  }
 
   static const _tileProviders = [
     ('OpenStreetMap', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
@@ -164,16 +173,18 @@ class _LBMapViewState extends State<LBMapView> {
                   if (hasGesture && widget.onPositionChanged != null) {
                     widget.onPositionChanged!(position.center, position.zoom);
                   }
-                  // Auto-precision: calculate precision from zoom
-                  if (widget.autoPrecision) {
+                  // Auto-precision: calculate precision from zoom with debounce
+                  if (widget.autoPrecision && !_isRebuilding) {
                     final newPrecision = _calcPrecisionFromZoom(position.zoom);
                     if (newPrecision != _currentPrecision) {
                       _currentPrecision = newPrecision;
                       widget.onPrecisionChanged?.call(newPrecision);
                     }
                   }
-                  // Notify zoom changes
-                  widget.onZoomChanged?.call(position.zoom.toInt());
+                  // Notify zoom changes (only if not auto-precision to avoid extra calls)
+                  if (!widget.autoPrecision) {
+                    widget.onZoomChanged?.call(position.zoom.toInt());
+                  }
                 },
                 onMapReady: () {
                   debugPrint('LBMapView: map ready');
@@ -367,32 +378,43 @@ class _LBMapViewState extends State<LBMapView> {
     final cells = widget.gridCells;
     if (cells.isEmpty) return [];
 
+    // Limit to prevent performance issues
+    final displayCells = cells.length > 100 ? cells.take(100).toList() : cells;
+    
     int maxObs = 1;
-    for (final cell in cells) {
+    for (final cell in displayCells) {
       if (cell.observationCount > maxObs) maxObs = cell.observationCount;
     }
 
-    return cells.map((cell) {
-      final density = cell.observationCount / maxObs;
-      final alpha = (0.15 + density * 0.6).clamp(0.15, 0.75);
-      
-      // Privacy mode: reduce opacity at high precision
-      final effectiveAlpha = widget.privacyMode && widget.gridPrecision >= 6 
-          ? alpha * 0.5 
-          : alpha;
-      
-      final fillColor = _cellFillColor(cell.dominantType, effectiveAlpha);
-      final borderColor = _threatBorderColor(cell.worstFlag);
+    try {
+      return displayCells.map((cell) {
+        final density = cell.observationCount / maxObs;
+        final alpha = (0.15 + density * 0.6).clamp(0.15, 0.75);
+        
+        // Privacy mode: reduce opacity at high precision
+        final effectiveAlpha = widget.privacyMode && widget.gridPrecision >= 6 
+            ? alpha * 0.5 
+            : alpha;
+        
+        final fillColor = _cellFillColor(cell.dominantType, effectiveAlpha);
+        final borderColor = _threatBorderColor(cell.worstFlag);
 
-      final points = _geohashToPolygon(cell.geohash);
+        final points = _geohashToPolygon(cell.geohash);
+        
+        // Skip invalid polygons
+        if (points.isEmpty) return null;
 
-      return Polygon(
-        points: points,
-        color: fillColor,
-        borderColor: borderColor,
-        borderStrokeWidth: cell.worstFlag > 0 ? 2.0 : 1.0,
-      );
-    }).toList();
+        return Polygon(
+          points: points,
+          color: fillColor,
+          borderColor: borderColor,
+          borderStrokeWidth: cell.worstFlag > 0 ? 2.0 : 1.0,
+        );
+      }).whereType<Polygon>().toList();
+    } catch (e) {
+      debugPrint('LB_MAP: Error building grid polygons: $e');
+      return [];
+    }
   }
 
   Color _cellFillColor(String dominantType, double alpha) {
@@ -413,15 +435,33 @@ class _LBMapViewState extends State<LBMapView> {
   }
 
   List<LatLng> _geohashToPolygon(String geohash) {
+    if (geohash.isEmpty || geohash.length < 2) return [];
+    
     // Get geohash bounds
     final bounds = _geohashBounds(geohash);
     
+    // Validate bounds are within valid ranges
+    final minLat = bounds['minLat'];
+    final maxLat = bounds['maxLat'];
+    final minLon = bounds['minLon'];
+    final maxLon = bounds['maxLon'];
+    
+    if (minLat == null || maxLat == null || minLon == null || maxLon == null) {
+      return [];
+    }
+    if (minLat.isNaN || maxLat.isNaN || minLon.isNaN || maxLon.isNaN) {
+      return [];
+    }
+    if (minLat < -90 || maxLat > 90 || minLon < -180 || maxLon > 180) {
+      return [];
+    }
+    
     // Return 4 corners of the geohash cell
     return [
-      LatLng(bounds['minLat']!, bounds['minLon']!),
-      LatLng(bounds['maxLat']!, bounds['minLon']!),
-      LatLng(bounds['maxLat']!, bounds['maxLon']!),
-      LatLng(bounds['minLat']!, bounds['maxLon']!),
+      LatLng(minLat, minLon),
+      LatLng(maxLat, minLon),
+      LatLng(maxLat, maxLon),
+      LatLng(minLat, maxLon),
     ];
   }
 
@@ -431,10 +471,12 @@ class _LBMapViewState extends State<LBMapView> {
     var minLat = -90.0, maxLat = 90.0;
     var minLon = -180.0, maxLon = 180.0;
     var isEven = true;
+    var hasValidChars = false;
 
     for (final ch in geohash.split('')) {
       final idx = base32.indexOf(ch.toLowerCase());
-      if (idx == -1) break;
+      if (idx == -1) continue;
+      hasValidChars = true;
       
       for (var bits = 4; bits >= 0; bits--) {
         final bitVal = (idx >> bits) & 1;
@@ -449,6 +491,11 @@ class _LBMapViewState extends State<LBMapView> {
       }
     }
 
+    // Return null if no valid characters found
+    if (!hasValidChars) {
+      return {'minLat': double.nan, 'maxLat': double.nan, 'minLon': double.nan, 'maxLon': double.nan};
+    }
+
     return {
       'minLat': minLat,
       'maxLat': maxLat,
@@ -458,20 +505,38 @@ class _LBMapViewState extends State<LBMapView> {
   }
 
   ({double lat, double lon}) _decodeGeohash(String geohash) {
+    if (geohash.isEmpty) return (lat: 0.0, lon: 0.0);
     final bounds = _geohashBounds(geohash);
+    final minLat = bounds['minLat'];
+    final maxLat = bounds['maxLat'];
+    final minLon = bounds['minLon'];
+    final maxLon = bounds['maxLon'];
+    if (minLat == null || maxLat == null || minLon == null || maxLon == null) {
+      return (lat: 0.0, lon: 0.0);
+    }
+    if (minLat.isNaN || maxLat.isNaN || minLon.isNaN || maxLon.isNaN) {
+      return (lat: 0.0, lon: 0.0);
+    }
     return (
-      lat: (bounds['minLat']! + bounds['maxLat']!) / 2,
-      lon: (bounds['minLon']! + bounds['maxLon']!) / 2,
+      lat: (minLat + maxLat) / 2,
+      lon: (minLon + maxLon) / 2,
     );
   }
 
   AggregateCell? _findCellAtPoint(LatLng point) {
     for (final cell in widget.gridCells) {
       final bounds = _geohashBounds(cell.geohash);
-      if (point.latitude >= bounds['minLat']! &&
-          point.latitude <= bounds['maxLat']! &&
-          point.longitude >= bounds['minLon']! &&
-          point.longitude <= bounds['maxLon']!) {
+      final minLat = bounds['minLat'];
+      final maxLat = bounds['maxLat'];
+      final minLon = bounds['minLon'];
+      final maxLon = bounds['maxLon'];
+      if (minLat == null || maxLat == null || minLon == null || maxLon == null) continue;
+      if (minLat.isNaN || maxLat.isNaN || minLon.isNaN || maxLon.isNaN) continue;
+      
+      if (point.latitude >= minLat &&
+          point.latitude <= maxLat &&
+          point.longitude >= minLon &&
+          point.longitude <= maxLon) {
         return cell;
       }
     }

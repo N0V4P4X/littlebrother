@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:latlong2/latlong.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/geohash.dart';
-import 'package:littlebrother/core/models/lb_aggregate_map.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
+import 'package:littlebrother/core/models/lb_aggregate_map.dart';
+import 'package:littlebrother/core/services/cell_id_lookup.dart';
+import 'package:littlebrother/core/secrets.dart';
 import 'package:littlebrother/modules/gps/gps_tracker.dart';
 
 class LBDatabase {
@@ -97,7 +98,11 @@ class LBDatabase {
         last_seen          INTEGER NOT NULL,
         observation_count  INTEGER NOT NULL DEFAULT 1,
         threat_flag        INTEGER NOT NULL DEFAULT 0,
-        notes              TEXT NOT NULL DEFAULT ''
+        notes              TEXT NOT NULL DEFAULT '',
+        opencellid_lat     REAL,
+        opencellid_lon     REAL,
+        opencellid_radius  REAL,
+        opencellid_verified INTEGER DEFAULT 0
       )
     ''');
 
@@ -237,6 +242,57 @@ class LBDatabase {
       await db.execute('''
         CREATE INDEX idx_waypoints_location ON ${LBDb.tDeviceWaypoints}(lat, lon);
       ''');
+    }
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE ${LBDb.tDeviceWaypoints} ADD COLUMN opencellid_lat REAL');
+      await db.execute('ALTER TABLE ${LBDb.tDeviceWaypoints} ADD COLUMN opencellid_lon REAL');
+      await db.execute('ALTER TABLE ${LBDb.tDeviceWaypoints} ADD COLUMN opencellid_radius REAL');
+      await db.execute('ALTER TABLE ${LBDb.tDeviceWaypoints} ADD COLUMN opencellid_verified INTEGER DEFAULT 0');
+      await db.execute('ALTER TABLE ${LBDb.tKnownDevices} ADD COLUMN opencellid_lat REAL');
+      await db.execute('ALTER TABLE ${LBDb.tKnownDevices} ADD COLUMN opencellid_lon REAL');
+      await db.execute('ALTER TABLE ${LBDb.tKnownDevices} ADD COLUMN opencellid_radius REAL');
+      await db.execute('ALTER TABLE ${LBDb.tKnownDevices} ADD COLUMN opencellid_verified INTEGER DEFAULT 0');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS cell_id_cache (
+          cell_key TEXT PRIMARY KEY,
+          lat REAL NOT NULL,
+          lon REAL NOT NULL,
+          radius REAL,
+          source TEXT,
+          timestamp INTEGER
+        )
+      ''');
+    }
+    if (oldVersion < 6) {
+      await db.execute('''
+        CREATE TABLE ${LBDb.tCachedCells} (
+          cell_key TEXT PRIMARY KEY,
+          mcc INTEGER,
+          mnc INTEGER,
+          lac INTEGER,
+          tac INTEGER,
+          cid INTEGER,
+          radio TEXT,
+          network_type TEXT,
+          lat REAL,
+          lon REAL,
+          range_meters INTEGER,
+          samples INTEGER,
+          last_updated INTEGER
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE ${LBDb.tVisitedRegions} (
+          geohash_prefix TEXT PRIMARY KEY,
+          min_lat REAL,
+          max_lat REAL,
+          min_lon REAL,
+          max_lon REAL,
+          cell_count INTEGER DEFAULT 0,
+          last_visited INTEGER
+        )
+      ''');
+      await db.execute('CREATE INDEX idx_cached_cells_mcc ON ${LBDb.tCachedCells}(mcc, mnc)');
     }
   }
 
@@ -414,15 +470,39 @@ class LBDatabase {
   Future<void> upsertKnownDevice(LBSignal signal, String vendor) async {
     final database = await db;
     final now = signal.timestamp.millisecondsSinceEpoch;
+    
+    double? opencellidLat;
+    double? opencellidLon;
+    double? opencellidRadius;
+    int opencellidVerified = 0;
+    
+    if ((signal.signalType == LBSignalType.cell || signal.signalType == LBSignalType.cellNeighbor) &&
+        signal.identifier != 'DOWNGRADE_EVENT' &&
+        Secrets.hasOpenCellIdKey &&
+        !Secrets.privacyMode) {
+      final lookup = OpenCellIdLookup();
+      final result = await lookup.lookupCell(signal.identifier);
+      if (result != null) {
+        opencellidLat = result.position.latitude;
+        opencellidLon = result.position.longitude;
+        opencellidRadius = result.radiusMeters;
+        opencellidVerified = 1;
+      }
+    }
+    
     await database.rawInsert('''
       INSERT INTO ${LBDb.tKnownDevices}
-        (identifier, signal_type, display_name, vendor, first_seen, last_seen, observation_count, threat_flag)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        (identifier, signal_type, display_name, vendor, first_seen, last_seen, observation_count, threat_flag, opencellid_lat, opencellid_lon, opencellid_radius, opencellid_verified)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
       ON CONFLICT(identifier) DO UPDATE SET
         display_name       = excluded.display_name,
         vendor             = CASE WHEN vendor = '' THEN excluded.vendor ELSE vendor END,
         last_seen          = excluded.last_seen,
-        observation_count  = observation_count + 1
+        observation_count  = observation_count + 1,
+        opencellid_lat     = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_lat ELSE opencellid_lat END,
+        opencellid_lon     = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_lon ELSE opencellid_lon END,
+        opencellid_radius  = CASE WHEN excluded.opencellid_verified = 1 THEN excluded.opencellid_radius ELSE opencellid_radius END,
+        opencellid_verified = MAX(opencellid_verified, excluded.opencellid_verified)
     ''', [
       signal.identifier,
       signal.signalType,
@@ -430,6 +510,10 @@ class LBDatabase {
       vendor,
       now, now,
       signal.threatFlag,
+      opencellidLat,
+      opencellidLon,
+      opencellidRadius,
+      opencellidVerified,
     ]);
   }
 
@@ -520,21 +604,29 @@ class LBDatabase {
 
     final rows = await database.rawQuery('''
       SELECT 
-        identifier as cell_key,
-        display_name,
-        metadata_json,
-        rssi_avg as avg_rssi,
-        rssi_max as rssi,
-        obs_count,
-        first_seen,
-        last_seen,
-        lat,
-        lon,
-        threat_flag as worst_flag,
+        w.identifier as cell_key,
+        w.display_name,
+        w.metadata_json,
+        w.rssi_avg as avg_rssi,
+        w.rssi_max as rssi,
+        w.obs_count,
+        w.first_seen,
+        w.last_seen,
+        w.lat,
+        w.lon,
+        w.threat_flag as worst_flag,
+        w.opencellid_lat,
+        w.opencellid_lon,
+        w.opencellid_radius,
+        w.opencellid_verified,
+        c.lat as cached_lat,
+        c.lon as cached_lon,
+        c.range_meters as cached_range,
         0 as max_severity
-      FROM ${LBDb.tDeviceWaypoints}
+      FROM ${LBDb.tDeviceWaypoints} w
+      LEFT JOIN ${LBDb.tCachedCells} c ON w.identifier = c.cell_key
       WHERE $where
-      ORDER BY obs_count DESC
+      ORDER BY w.obs_count DESC
       LIMIT ?
     ''', [...args, limit]);
 
@@ -542,6 +634,21 @@ class LBDatabase {
       final meta = row['metadata_json'] != null 
           ? _parseJson(row['metadata_json'] as String)
           : <String, dynamic>{};
+      
+      final cachedLat = row['cached_lat'] as double?;
+      final cachedLon = row['cached_lon'] as double?;
+      final opencellidLat = row['opencellid_lat'] as double?;
+      final opencellidLon = row['opencellid_lon'] as double?;
+      final opencellidVerified = (row['opencellid_verified'] as int?) ?? 0;
+      
+      final LatLng position;
+      if (cachedLat != null && cachedLon != null) {
+        position = LatLng(cachedLat, cachedLon);
+      } else if (opencellidVerified == 1 && opencellidLat != null && opencellidLon != null) {
+        position = LatLng(opencellidLat, opencellidLon);
+      } else {
+        position = LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0);
+      }
       
       return CellTower(
         cellKey:         (row['cell_key'] as String?) ?? '',
@@ -554,7 +661,11 @@ class LBDatabase {
         operator:        meta['operator']?.toString(),
         isServing:       (meta['is_serving'] is bool) ? (meta['is_serving'] as bool) : 
                          ((meta['is_serving'] is num) ? (meta['is_serving'] as num).toInt() == 1 : false),
-        position:         LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
+        position:        position,
+        opencellidLat:   opencellidLat,
+        opencellidLon:   opencellidLon,
+        opencellidRadius: row['opencellid_radius'] as double?,
+        isOpencellidVerified: opencellidVerified == 1,
         observationCount: (row['obs_count'] as num?)?.toInt() ?? 0,
         worstThreat:     (row['max_severity'] as num?)?.toInt() ?? 0,
         worstThreatFlag: (row['worst_flag'] as num?)?.toInt() ?? 0,
@@ -565,6 +676,146 @@ class LBDatabase {
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );
     }).toList();
+  }
+
+  /// Backfill OpenCellID locations for existing cell towers without verified locations
+  /// Returns count of towers updated
+  Future<int> backfillOpenCellIdLocations({int batchSize = 10}) async {
+    if (!Secrets.hasOpenCellIdKey || Secrets.privacyMode) {
+      debugPrint('OpenCellID backfill skipped: no API key or privacy mode enabled');
+      return 0;
+    }
+
+    final database = await db;
+    final lookup = OpenCellIdLookup();
+    
+    // Get unverified cell towers
+    final rows = await database.query(
+      LBDb.tDeviceWaypoints,
+      where: "signal_type = 'cell' AND (opencellid_verified IS NULL OR opencellid_verified = 0)",
+      limit: batchSize,
+    );
+
+    if (rows.isEmpty) {
+      debugPrint('OpenCellID backfill: no unverified towers found');
+      return 0;
+    }
+
+    int updated = 0;
+    for (final row in rows) {
+      final identifier = row['identifier'] as String;
+      final result = await lookup.lookupCell(identifier);
+      
+      if (result != null) {
+        await database.update(
+          LBDb.tDeviceWaypoints,
+          {
+            'opencellid_lat': result.position.latitude,
+            'opencellid_lon': result.position.longitude,
+            'opencellid_radius': result.radiusMeters,
+            'opencellid_verified': 1,
+          },
+          where: 'identifier = ?',
+          whereArgs: [identifier],
+        );
+        updated++;
+        debugPrint('OpenCellID backfill: updated $identifier');
+      }
+    }
+
+    debugPrint('OpenCellID backfill: updated $updated of ${rows.length} towers');
+    return updated;
+  }
+
+  /// Get signal trail - sequence of GPS positions for a device
+  Future<List<SignalPoint>> getSignalTrail(String identifier, {int? sinceMs, int limit = 100}) async {
+    final database = await db;
+    
+    final conditions = ['identifier = ?'];
+    final args = <dynamic>[identifier];
+    
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+
+    final rows = await database.rawQuery('''
+      SELECT lat, lon, ts, rssi, signal_type
+      FROM ${LBDb.tObservations}
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY ts ASC
+      LIMIT ?
+    ''', [...args, limit]);
+
+    return rows.map((row) => SignalPoint(
+      lat: (row['lat'] as num).toDouble(),
+      lon: (row['lon'] as num).toDouble(),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(row['ts'] as int),
+      rssi: (row['rssi'] as num?)?.toInt() ?? -100,
+      signalType: row['signal_type']?.toString() ?? 'unknown',
+    )).toList();
+  }
+
+  /// Get trails for multiple devices (all devices in a layer)
+  Future<Map<String, List<SignalPoint>>> getAllSignalTrails({
+    required String signalType,
+    int? sinceMs,
+    int limitPerDevice = 50,
+    int maxDevices = 100,
+  }) async {
+    final database = await db;
+    
+    // Get device identifiers
+    final deviceRows = await database.rawQuery('''
+      SELECT DISTINCT identifier 
+      FROM ${LBDb.tDeviceWaypoints}
+      WHERE signal_type = ? AND lat IS NOT NULL AND lon IS NOT NULL
+      ${sinceMs != null ? 'AND last_seen >= ?' : ''}
+      ORDER BY obs_count DESC
+      LIMIT ?
+    ''', sinceMs != null ? [signalType, sinceMs, maxDevices] : [signalType, maxDevices]);
+
+    final trails = <String, List<SignalPoint>>{};
+    
+    for (final row in deviceRows) {
+      final identifier = row['identifier'] as String;
+      final trail = await getSignalTrail(identifier, sinceMs: sinceMs, limit: limitPerDevice);
+      if (trail.length >= 2) {
+        trails[identifier] = trail;
+      }
+    }
+    
+    return trails;
+  }
+
+  /// Determine if device is mobile based on position variance
+  /// Returns: 'mobile', 'static', or 'unknown'
+  String classifyDeviceMovement(List<SignalPoint> trail) {
+    if (trail.length < 3) return 'unknown';
+    
+    // Calculate bounding box
+    double minLat = trail.first.lat, maxLat = trail.first.lat;
+    double minLon = trail.first.lon, maxLon = trail.first.lon;
+    
+    for (final point in trail) {
+      if (point.lat < minLat) minLat = point.lat;
+      if (point.lat > maxLat) maxLat = point.lat;
+      if (point.lon < minLon) minLon = point.lon;
+      if (point.lon > maxLon) maxLon = point.lon;
+    }
+    
+    // Calculate rough distance in meters (simplified)
+    final latDiff = maxLat - minLat;
+    final lonDiff = maxLon - minLon;
+    final latMeters = latDiff * 111320; // ~111m per degree
+    final lonMeters = lonDiff * 111320 * 0.7; // rough adjustment for lon
+    
+    final distanceMeters = (latMeters * latMeters + lonMeters * lonMeters).abs();
+    
+    // Thresholds (in meters)
+    if (distanceMeters < 50) return 'static';
+    if (distanceMeters > 500) return 'mobile';
+    return 'unknown';
   }
 
   Map<String, dynamic> _parseJson(String json) {
@@ -773,13 +1024,37 @@ class LBDatabase {
   }
 
   Future<void> rebuildAggregateCells({int precision = 7, bool force = false}) async {
+    final database = await db;
+    
+    // Check if we have any observations to aggregate
+    final obsCount = Sqflite.firstIntValue(await database.rawQuery(
+      'SELECT COUNT(*) FROM ${LBDb.tObservations}'
+    )) ?? 0;
+    
+    // Also check device_waypoints
+    final waypointCount = Sqflite.firstIntValue(await database.rawQuery(
+      'SELECT COUNT(*) FROM ${LBDb.tDeviceWaypoints} WHERE lat IS NOT NULL AND lon IS NOT NULL'
+    )) ?? 0;
+    
+    debugPrint('LB_DB: Starting rebuild with $obsCount observations and $waypointCount waypoints');
+    
+    if (obsCount == 0 && waypointCount == 0) {
+      debugPrint('LB_DB: No data to aggregate - skipping rebuild');
+      return;
+    }
+    
     final now = DateTime.now().millisecondsSinceEpoch;
     if (!force && _lastRebuildMs != null && (now - _lastRebuildMs!) < _rebuildIntervalMs) {
-      return;
+      final existingCells = Sqflite.firstIntValue(await database.rawQuery(
+        'SELECT COUNT(*) FROM ${LBDb.tAggregateCells} WHERE precision = ?', [precision]
+      )) ?? 0;
+      if (existingCells > 0) {
+        debugPrint('LB_DB: Skipping rebuild - interval not elapsed and $existingCells cells exist');
+        return;
+      }
     }
     _lastRebuildMs = now;
     
-    final database = await db;
     await database.transaction((txn) async {
       await txn.delete(
         LBDb.tAggregateCells,
@@ -787,6 +1062,7 @@ class LBDatabase {
         whereArgs: [precision],
       );
 
+      // Aggregate from observations table
       await txn.rawInsert('''
         INSERT INTO ${LBDb.tAggregateCells}
           (geohash, precision, device_count, obs_count, worst_flag,
@@ -815,6 +1091,63 @@ class LBDatabase {
         GROUP BY p, geohash
         HAVING geohash IS NOT NULL
       ''');
+    });
+    
+    // Merge device_waypoints data by computing geohash in Dart
+    final waypoints = await database.rawQuery('''
+      SELECT identifier, signal_type, lat, lon, obs_count, threat_flag, last_seen
+      FROM ${LBDb.tDeviceWaypoints}
+      WHERE lat IS NOT NULL AND lon IS NOT NULL
+        AND lat > -90 AND lat < 90 AND lon > -180 AND lon < 180
+    ''');
+    
+    debugPrint('LB_DB: Found $waypointCount waypoints to merge');
+    
+    int mergedCount = 0;
+    await database.transaction((txn) async {
+      for (final wp in waypoints) {
+        try {
+          final lat = (wp['lat'] as num).toDouble();
+          final lon = (wp['lon'] as num).toDouble();
+          
+          // Validate coordinates are within valid ranges
+          if (lat.isNaN || lat.isInfinite || lon.isNaN || lon.isInfinite) {
+            continue;
+          }
+          if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            continue;
+          }
+          
+          final geohash = Geohash.encode(lat, lon, precision: precision);
+        
+        await txn.rawInsert('''
+          INSERT INTO ${LBDb.tAggregateCells}
+            (geohash, precision, device_count, obs_count, worst_flag,
+             wifi_count, ble_count, cell_count, most_recent)
+          VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(geohash, precision) DO UPDATE SET
+            device_count = device_count + 1,
+            obs_count = obs_count + excluded.obs_count,
+            worst_flag = MAX(worst_flag, excluded.worst_flag),
+            wifi_count = wifi_count + excluded.wifi_count,
+            ble_count = ble_count + excluded.ble_count,
+            cell_count = cell_count + excluded.cell_count,
+            most_recent = MAX(most_recent, excluded.most_recent)
+        ''', [
+          geohash,
+          precision,
+          wp['obs_count'],
+          wp['threat_flag'],
+          wp['signal_type'] == 'wifi' ? 1 : 0,
+          wp['signal_type'] == 'ble' ? 1 : 0,
+          (wp['signal_type'] == 'cell' || wp['signal_type'] == 'cell_neighbor') ? 1 : 0,
+          wp['last_seen'],
+        ]);
+        mergedCount++;
+        } catch (e) {
+          // Skip individual insert failures
+        }
+      }
     });
     
     // Log statistics for debugging

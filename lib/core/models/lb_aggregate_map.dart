@@ -33,20 +33,38 @@ class AggregateCell {
   factory AggregateCell.fromMap(Map<String, dynamic> m, {int precision = LBGeohash.precisionLevel}) {
     final geohashVal = m['geohash'];
     final geohashStr = geohashVal is String ? geohashVal : (geohashVal?.toString() ?? '');
-    final gh = Geohash.decode(geohashStr);
-    return AggregateCell(
-      geohash:          geohashStr,
-      precision:        precision,
-      lat:              gh.lat,
-      lon:              gh.lon,
-      deviceCount:      m['device_count'] as int? ?? 0,
-      observationCount: m['obs_count'] as int? ?? 0,
-      worstFlag:        m['worst_flag'] as int? ?? 0,
-      wifiCount:        m['wifi_count'] as int? ?? 0,
-      bleCount:         m['ble_count'] as int? ?? 0,
-      cellCount:        m['cell_count'] as int? ?? 0,
-      mostRecent:       DateTime.fromMillisecondsSinceEpoch((m['most_recent'] as num?)?.toInt() ?? 0),
-    );
+    
+    if (geohashStr.isEmpty) {
+      throw FormatException('Empty geohash in AggregateCell');
+    }
+    
+    try {
+      final gh = Geohash.decode(geohashStr);
+      
+      // Validate decoded coordinates
+      if (gh.lat.isNaN || gh.lon.isNaN || gh.lat.isInfinite || gh.lon.isInfinite) {
+        throw FormatException('Invalid coordinates from geohash: $geohashStr');
+      }
+      if (gh.lat < -90 || gh.lat > 90 || gh.lon < -180 || gh.lon > 180) {
+        throw FormatException('Out of range coordinates from geohash: $geohashStr');
+      }
+      
+      return AggregateCell(
+        geohash:          geohashStr,
+        precision:        precision,
+        lat:              gh.lat,
+        lon:              gh.lon,
+        deviceCount:      m['device_count'] as int? ?? 0,
+        observationCount: m['obs_count'] as int? ?? 0,
+        worstFlag:        m['worst_flag'] as int? ?? 0,
+        wifiCount:        m['wifi_count'] as int? ?? 0,
+        bleCount:         m['ble_count'] as int? ?? 0,
+        cellCount:        m['cell_count'] as int? ?? 0,
+        mostRecent:       DateTime.fromMillisecondsSinceEpoch((m['most_recent'] as num?)?.toInt() ?? 0),
+      );
+    } catch (e) {
+      throw FormatException('Failed to decode geohash "$geohashStr": $e');
+    }
   }
 
   String get dominantType {
@@ -163,6 +181,10 @@ class CellTower {
   final String? operator;
   final bool isServing;
   final LatLng position;
+  final double? opencellidLat;
+  final double? opencellidLon;
+  final double? opencellidRadius;
+  final bool isOpencellidVerified;
   final int observationCount;
   final int worstThreat;
   final int worstThreatFlag;
@@ -182,6 +204,10 @@ class CellTower {
     this.operator,
     required this.isServing,
     required this.position,
+    this.opencellidLat,
+    this.opencellidLon,
+    this.opencellidRadius,
+    this.isOpencellidVerified = false,
     required this.observationCount,
     required this.worstThreat,
     required this.worstThreatFlag,
@@ -204,6 +230,10 @@ class CellTower {
       operator:       (m['operator'] as String?) ?? meta['operator'] as String?,
       isServing:      (m['is_serving'] as bool?) ?? ((meta['is_serving'] as num?)?.toInt() ?? 0) == 1,
       position:       LatLng((m['lat'] as num?)?.toDouble() ?? 0.0, (m['lon'] as num?)?.toDouble() ?? 0.0),
+      opencellidLat:  (m['opencellid_lat'] as num?)?.toDouble(),
+      opencellidLon:  (m['opencellid_lon'] as num?)?.toDouble(),
+      opencellidRadius: (m['opencellid_radius'] as num?)?.toDouble(),
+      isOpencellidVerified: (m['opencellid_verified'] as num?)?.toInt() == 1,
       observationCount: (m['obs_count'] as num?)?.toInt() ?? 1,
       worstThreat:     (m['max_severity'] as num?)?.toInt() ?? 0,
       worstThreatFlag: (m['worst_flag'] as num?)?.toInt() ?? LBThreatFlag.clean,

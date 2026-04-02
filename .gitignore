@@ -32,3 +32,4 @@ android/build/
 .env
 .env.*
 config.json
+secrets.dart

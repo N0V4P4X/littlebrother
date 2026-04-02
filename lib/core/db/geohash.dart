@@ -48,6 +48,15 @@ class Geohash {
 
   /// Decode a geohash to its center lat/lon.
   static ({double lat, double lon}) decode(String hash) {
+    final bounds = decodeBounds(hash);
+    return (
+      lat: (bounds['minLat']! + bounds['maxLat']!) / 2,
+      lon: (bounds['minLon']! + bounds['maxLon']!) / 2,
+    );
+  }
+
+  /// Decode a geohash to its bounding box (min/max lat/lon).
+  static Map<String, double?> decodeBounds(String hash) {
     var minLat = -90.0, maxLat = 90.0;
     var minLon = -180.0, maxLon = 180.0;
     var isEven = true;
@@ -76,9 +85,11 @@ class Geohash {
       }
     }
 
-    return (
-      lat: (minLat + maxLat) / 2,
-      lon: (minLon + maxLon) / 2,
-    );
+    return {
+      'minLat': minLat,
+      'maxLat': maxLat,
+      'minLon': minLon,
+      'maxLon': maxLon,
+    };
   }
 }

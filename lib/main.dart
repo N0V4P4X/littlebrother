@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 import 'package:littlebrother/core/scan_coordinator.dart';
+import 'package:littlebrother/core/services/cell_cache_service.dart' hide debugPrint;
 import 'package:littlebrother/ui/radar/radar_screen.dart';
 import 'package:littlebrother/ui/screens/signal_list_screen.dart';
 import 'package:littlebrother/ui/screens/threat_log_screen.dart';
@@ -35,6 +36,12 @@ void main() async {
     
     // Run automatic waypoints migration if needed
     await _runWaypointsMigration();
+    
+    // Backfill OpenCellID locations for existing towers
+    await _runOpenCellIdBackfill();
+    
+    // Initialize cell cache service (loads cached cells for visited regions)
+    await _runCellCacheInit();
   } catch (e) {
     debugPrint('LB_MAIN: Database init error: $e');
   }
@@ -60,6 +67,29 @@ Future<void> _runWaypointsMigration() async {
     }
   } catch (e) {
     debugPrint('LB_MAIN: Migration error: $e');
+  }
+}
+
+Future<void> _runOpenCellIdBackfill() async {
+  try {
+    debugPrint('LB_MAIN: Starting OpenCellID backfill...');
+    final updated = await LBDatabase.instance.backfillOpenCellIdLocations(batchSize: 20);
+    debugPrint('LB_MAIN: OpenCellID backfill complete - $updated towers updated');
+  } catch (e) {
+    debugPrint('LB_MAIN: OpenCellID backfill error: $e');
+  }
+}
+
+Future<void> _runCellCacheInit() async {
+  try {
+    debugPrint('LB_MAIN: Starting cell cache initialization...');
+    final cacheService = CellCacheService();
+    await cacheService.initialize();
+    final cellCount = await cacheService.getCachedCellCount();
+    final regionCount = await cacheService.getVisitedRegionCount();
+    debugPrint('LB_MAIN: Cell cache initialized - $cellCount cells in $regionCount regions');
+  } catch (e) {
+    debugPrint('LB_MAIN: Cell cache init error: $e');
   }
 }
 

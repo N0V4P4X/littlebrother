@@ -116,7 +116,7 @@ class CellChannelHandler(private val context: Context) {
             "timestampNanos" to cell.timeStamp,
         )
 
-        return when {
+        val result = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && cell is CellInfoNr -> parseNr(cell, base)
             cell is CellInfoLte  -> parseLte(cell, base)
             cell is CellInfoWcdma -> parseWcdma(cell, base)
@@ -124,6 +124,45 @@ class CellChannelHandler(private val context: Context) {
             cell is CellInfoCdma -> parseCdma(cell, base)
             else -> null
         }
+
+        if (result != null) {
+            val cellKey = result["cellKey"] as? String ?: return null
+            if (!isValidCellKey(cellKey, result)) {
+                return null
+            }
+        }
+
+        return result
+    }
+
+    private fun isValidCellKey(cellKey: String, data: Map<String, Any>): Boolean {
+        if (cellKey.startsWith("CDMA-")) {
+            val parts = cellKey.substring(5).split("-")
+            if (parts.size < 3) return false
+            val systemId = parts[0].toIntOrNull() ?: return false
+            val networkId = parts[1].toIntOrNull() ?: return false
+            val basestationId = parts[2].toIntOrNull() ?: return false
+            if (systemId <= 0 || networkId <= 0 || basestationId <= 0) return false
+            return true
+        }
+
+        val parts = cellKey.split("-")
+        if (parts.size < 4) return false
+
+        val mcc = parts[0].toIntOrNull() ?: return false
+        val mnc = parts[1].toIntOrNull() ?: return false
+
+        if (mcc <= 0 || mcc > 999) return false
+        if (mnc <= 0 || mnc > 999) return false
+
+        val tacLac = parts[2].toIntOrNull()
+        val cidCi = parts[3].toIntOrNull()
+
+        if (tacLac == null || cidCi == null) return false
+        if (tacLac <= 0 || tacLac == -2147483647) return false
+        if (cidCi <= 0 || cidCi == -2147483647) return false
+
+        return true
     }
 
     private fun parseLte(cell: CellInfoLte, base: MutableMap<String, Any>): Map<String, Any> {

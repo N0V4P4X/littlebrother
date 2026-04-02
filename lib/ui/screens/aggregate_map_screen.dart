@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/models/lb_aggregate_map.dart';
+import 'package:littlebrother/core/secrets.dart';
 import 'package:littlebrother/modules/gps/gps_tracker.dart';
 import 'package:littlebrother/ui/theme/lb_theme.dart';
 import 'package:littlebrother/ui/widgets/lb_map_view.dart';
@@ -29,11 +30,13 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   int _tileProviderIndex = 1; // Default to CartoDB Voyager
   int _gridPrecision = 7; // Default precision (150m)
   bool _privacyMode = false;
+  bool _showTrails = false;
 
   List<AggregateCell> _gridCells = [];
   List<CellTower> _towers = [];
   List<WifiDevice> _wifiDevices = [];
   List<BleDevice> _bleDevices = [];
+  Map<String, List<SignalPoint>> _signalTrails = {};
   LatLng? _currentLocation;
 
   final _mapController = MapController();
@@ -82,22 +85,34 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
     setState(() => _loading = true);
 
     try {
+      debugPrint('AggregateMap: _load starting for layer: $_layer');
       final sinceMs = _timeRange.cutoffMs;
 
       if (_layer == MapLayer.grid) {
-        await _db.rebuildAggregateCells(precision: _gridPrecision);
+        await _db.rebuildAggregateCells(precision: _gridPrecision, force: true);
         final cells = await _db.getAggregateCells(
           precision: _gridPrecision,
           minThreatFlag: _threatFilter.minFlag,
           sinceMs: sinceMs,
           limit: 200,
         );
-        final cellObjects = cells.map((m) => AggregateCell.fromMap(m, precision: _gridPrecision)).toList();
-        final maxObs = cells.isEmpty ? 1 : cells.map((c) => c['obs_count'] as int? ?? 1).reduce((a, b) => a > b ? a : b);
+        
+        // Parse cells with error handling
+        final cellObjects = <AggregateCell>[];
+        for (final m in cells) {
+          try {
+            cellObjects.add(AggregateCell.fromMap(m, precision: _gridPrecision));
+          } catch (e) {
+            debugPrint('AggregateMap: Skipping invalid cell: $e');
+          }
+        }
+        
+        final maxObs = cellObjects.isEmpty ? 1 : cellObjects.map((c) => c.observationCount).reduce((a, b) => a > b ? a : b);
         setState(() {
           _gridCells = cellObjects;
           _maxObs = maxObs;
           _loading = false;
+          _error = null;
         });
         debugPrint('AggregateMap: loaded ${_gridCells.length} grid cells');
       } else if (_layer == MapLayer.towers) {
@@ -140,11 +155,17 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
           debugPrint('  BLE: ${b.mac} lat=${b.position.latitude.toStringAsFixed(5)} lon=${b.position.longitude.toStringAsFixed(5)}');
         }
       }
+
+      // Load signal trails if enabled
+      if (_showTrails && sinceMs != null) {
+        await _loadTrails(sinceMs);
+      }
     } catch (e, st) {
       debugPrint('AggregateMap load error: $e\n$st');
       setState(() {
         _loading = false;
         _error = e.toString();
+        _gridCells = []; // Clear grid on error
       });
     } finally {
       _loadRunning = false;
@@ -162,6 +183,31 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
     _load();
   }
 
+  Future<void> _loadTrails(int? sinceMs) async {
+    final layerSignalType = switch (_layer) {
+      MapLayer.towers => 'cell',
+      MapLayer.wifi => 'wifi',
+      MapLayer.ble => 'ble',
+      _ => null,
+    };
+    
+    if (layerSignalType == null) return;
+    
+    final trails = await _db.getAllSignalTrails(
+      signalType: layerSignalType,
+      sinceMs: sinceMs,
+      limitPerDevice: 50,
+      maxDevices: 100,
+    );
+    
+    setState(() => _signalTrails = trails);
+  }
+
+  void _toggleTrails() {
+    setState(() => _showTrails = !_showTrails);
+    _load();
+  }
+
   void _changePrecision(int precision) {
     setState(() {
       _gridPrecision = precision;
@@ -171,8 +217,15 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
 
   LatLng _getMapCenter() {
     if (_layer == MapLayer.grid && _gridCells.isNotEmpty) {
-      final lats = _gridCells.map((c) => c.lat);
-      final lons = _gridCells.map((c) => c.lon);
+      // Filter out invalid coordinates (NaN/Infinity)
+      final validCells = _gridCells.where((c) => 
+        !c.lat.isNaN && !c.lon.isNaN && 
+        !c.lat.isInfinite && !c.lon.isInfinite
+      ).toList();
+      if (validCells.isEmpty) return _currentLocation ?? LatLng(32.0, -81.0);
+      
+      final lats = validCells.map((c) => c.lat).toList();
+      final lons = validCells.map((c) => c.lon).toList();
       return LatLng(
         (lats.reduce(math.min) + lats.reduce(math.max)) / 2,
         (lons.reduce(math.min) + lons.reduce(math.max)) / 2,
@@ -323,6 +376,11 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
   }
 
   void _showTowerDetail(CellTower tower) {
+    final detectionPos = '${tower.position.latitude.toStringAsFixed(5)}, ${tower.position.longitude.toStringAsFixed(5)}';
+    final opencellidPos = tower.isOpencellidVerified && tower.opencellidLat != null
+        ? '${tower.opencellidLat!.toStringAsFixed(5)}, ${tower.opencellidLon!.toStringAsFixed(5)}'
+        : null;
+    
     showModalBottomSheet(
       context: context,
       backgroundColor: LBColors.surface,
@@ -335,14 +393,35 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Cell Tower: ${tower.cellKey}', style: LBTextStyles.heading),
+            Row(
+              children: [
+                Text('Cell Tower: ${tower.cellKey}', style: LBTextStyles.heading),
+                if (tower.isOpencellidVerified) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: LBColors.green.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('✓ Verified', style: TextStyle(color: LBColors.green, fontSize: 10)),
+                  ),
+                ],
+              ],
+            ),
             const SizedBox(height: 8),
             Text('Type: ${tower.networkType}', style: LBTextStyles.body),
             Text('Band: ${tower.band ?? "Unknown"}', style: LBTextStyles.body),
             Text('PCI: ${tower.pci}', style: LBTextStyles.body),
             Text('Operator: ${tower.operator ?? "Unknown"}', style: LBTextStyles.body),
             Text('Observations: ${tower.observationCount}', style: LBTextStyles.body),
-            Text('Position: ${tower.position.latitude.toStringAsFixed(5)}, ${tower.position.longitude.toStringAsFixed(5)}', style: LBTextStyles.label),
+            if (opencellidPos != null) ...[
+              const SizedBox(height: 8),
+              Text('OpenCellID: $opencellidPos', style: LBTextStyles.body.copyWith(color: LBColors.green)),
+              if (tower.opencellidRadius != null)
+                Text('Accuracy: ±${tower.opencellidRadius!.toInt()}m', style: LBTextStyles.label),
+            ],
+            Text('Detection: $detectionPos', style: LBTextStyles.label),
           ],
         ),
       ),
@@ -544,8 +623,11 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                         enableClustering: _layer != MapLayer.grid,
                         clusterZoomThreshold: 15,
                         privacyMode: _privacyMode,
-                        onPrivacyToggle: () => setState(() => _privacyMode = !_privacyMode),
-                        autoPrecision: _layer == MapLayer.grid,
+                        onPrivacyToggle: () => setState(() {
+                          _privacyMode = !_privacyMode;
+                          Secrets.privacyMode = _privacyMode;
+                        }),
+                        autoPrecision: false, // Disable to prevent zoom-triggered rebuilds
                         onPrecisionChanged: (precision) {
                           if (_layer == MapLayer.grid && precision != _gridPrecision) {
                             setState(() => _gridPrecision = precision);
@@ -556,6 +638,7 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
                           debugPrint('Map zoom: $zoom');
                         },
                         onCellTap: _layer == MapLayer.grid ? (cell) => _showCellDetail(cell) : null,
+                        signalTrails: _showTrails ? _signalTrails : null,
                       ),
           ),
         ],
@@ -616,6 +699,16 @@ class _AggregateMapScreenState extends State<AggregateMapScreen> {
               _buildChip(label: '7 (150m)', selected: _gridPrecision == 7, onTap: () => _changePrecision(7)),
               _buildChip(label: '6 (1km)', selected: _gridPrecision == 6, onTap: () => _changePrecision(6)),
               _buildChip(label: '8 (38m)', selected: _gridPrecision == 8, onTap: () => _changePrecision(8)),
+            ],
+            if (_layer != MapLayer.grid) ...[
+              const SizedBox(width: 12),
+              _buildLabel('TRAIL'),
+              const SizedBox(width: 4),
+              _buildChip(
+                label: 'Paths',
+                selected: _showTrails,
+                onTap: _toggleTrails,
+              ),
             ],
           ],
         ),

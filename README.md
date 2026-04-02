@@ -2,7 +2,7 @@
 
 Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · Evasion Automation
 
-Version: 0.6.0 (2026-04-01)
+Version: 0.7.0 (2026-04-02)
 
 > **Platform**: Android primary · Linux desktop · iOS/macOS/Windows planned
 
@@ -202,6 +202,16 @@ Detection algorithms (stingray, rogue AP, BLE tracker) are platform-agnostic and
 - **Aggregate map**: Limited to 200 cells for performance
 - **Timeline export**: Large sessions may take time to generate CSV
 - **Intel Map debug mode**: Debug builds show GPS status and observation statistics in toolbar (visible in `flutter run` or debug APK)
+
+### Cell Tower Mapping (v0.7.0)
+
+- **Cell towers showing at detection position**: Towers may appear at the GPS location where they were first detected rather than their actual OpenCellID-verified coordinates. This occurs when:
+  - The cell key is malformed (filtered in scanner, v0.7.0+)
+  - OpenCellID lookup fails or returns no results
+  - No OpenCellID API key is configured
+- **OpenCellID integration**: Requires an API key from opencellid.org. Set `OPENCELLID_API_KEY` in secrets.dart. Without a key, towers fall back to detection position.
+- **Bulk loading**: Cells are loaded for visited regions (county/city level) at startup. Privacy mode disables external API calls.
+- **Signal validation**: Stingray detection heuristics are available but not yet integrated into the cell scanner callback chain.
 
 ### Reporting Bugs
 
@@ -640,7 +650,7 @@ Integration will begin once Gridland stabilizes beyond v0.
 - [x] **P5 partial** — Enhanced Stingray heuristics (H6: TA anomaly, H7: neighbor stability, H4 weight fix)
 - [ ] **P5** — Cell tab UI (full cell signal detail view)
 - [x] **P6** — Cell map overlay (OpenStreetMap / flutter_map)
-- [ ] **P6** — OpenCelliD sync (seed baseline from public cell tower DB)
+- [x] **P6 partial** — OpenCelliD sync (CellCacheService implemented, bulk loading for visited regions)
 - [ ] **P6** — PhysicalChannelConfig listener (band + channel width telemetry)
 - [x] **P7 partial** — Cross-platform stubs (wake_lock, opsec_controller, cell_scanner, wifi_scanner) with conditional imports — Android + Linux + stub pattern
 - [x] **P7 partial** — PermissionGate platform guard (Android: full permission flow; non-Android: feature availability notice + continue)

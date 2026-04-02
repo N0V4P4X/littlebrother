@@ -9,7 +9,7 @@ class LBChannels {
 
 class LBDb {
   static const name            = 'littlebrother.db';
-  static const version         = 4;
+  static const version         = 6;
   static const tObservations   = 'observations';
   static const tKnownDevices   = 'known_devices';
   static const tCellBaseline   = 'cell_baseline';
@@ -17,6 +17,8 @@ class LBDb {
   static const tSessions       = 'sessions';
   static const tAggregateCells = 'aggregate_cells';
   static const tDeviceWaypoints = 'device_waypoints';
+  static const tCachedCells     = 'cached_cells';
+  static const tVisitedRegions = 'visited_regions';
 }
 
 class LBSignalType {
@@ -24,6 +26,22 @@ class LBSignalType {
   static const ble         = 'ble';
   static const cell        = 'cell';
   static const cellNeighbor = 'cell_neighbor';
+}
+
+class SignalPoint {
+  final double lat;
+  final double lon;
+  final DateTime timestamp;
+  final int rssi;
+  final String signalType;
+
+  const SignalPoint({
+    required this.lat,
+    required this.lon,
+    required this.timestamp,
+    required this.rssi,
+    required this.signalType,
+  });
 }
 
 class LBThreatType {
