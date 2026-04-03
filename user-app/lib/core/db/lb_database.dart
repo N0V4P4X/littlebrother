@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:archive/archive.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/geohash.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
@@ -20,6 +22,120 @@ class LBDatabase {
 
   Database? _db;
   Completer<Database>? _dbCompleter;
+
+  // ── Logging System ─────────────────────────────────────────────────────────
+  static final List<String> _logQueue = [];
+  static bool _logSessionStarted = false;
+  static String? _logDirPath;
+  static DateTime? _sessionStart;
+
+  static Future<void> startSession() async {
+    if (_logSessionStarted) return;
+    _sessionStart = DateTime.now();
+    final dir = await getApplicationDocumentsDirectory();
+    _logDirPath = p.join(dir.path, 'logs');
+    await Directory(_logDirPath!).create(recursive: true);
+    _logSessionStarted = true;
+    _log('INFO', 'Session started');
+  }
+
+  static void _log(String level, String message) {
+    final ts = DateTime.now().toIso8601String();
+    final line = '[$ts] [$level] $message';
+    _logQueue.add(line);
+    debugPrint(line);
+  }
+
+  static Future<void> flushLogs() async {
+    if (!_logSessionStarted || _logQueue.isEmpty) return;
+    final dir = _logDirPath;
+    if (dir == null) return;
+    final ts = _sessionStart ?? DateTime.now();
+    final filename = 'lb_${ts.toIso8601String().replaceAll(':', '-')}.txt';
+    final file = File(p.join(dir, filename));
+    final content = _logQueue.join('\n');
+    await file.writeAsString(content);
+    debugPrint('LB_DB: Flushed ${_logQueue.length} log lines to $filename');
+    _logQueue.clear();
+  }
+
+  static Future<void> archiveOldDatabase(String dbPath) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final archiveDir = p.join(dir.path, 'db_archive');
+      await Directory(archiveDir).create(recursive: true);
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+      final archivePath = p.join(archiveDir, 'lb_old_$ts.tar.gz');
+      final data = await File(dbPath).readAsBytes();
+      final archive = Archive();
+      archive.addFile(ArchiveFile('database.db', data.length, data));
+      final encoded = GZipEncoder().encode(TarEncoder().encode(archive));
+      if (encoded != null) {
+        await File(archivePath).writeAsBytes(encoded);
+        _log('WARN', 'Archived old database to $archivePath');
+      }
+    } catch (e) {
+      _log('ERROR', 'Failed to archive old database: $e');
+    }
+  }
+
+  // ── Migration Fix ─────────────────────────────────────────────────────────
+  Future<void> _fixMigrations() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final path = p.join(dir.path, LBDb.name);
+      final dbFile = File(path);
+      if (!await dbFile.exists()) return;
+      
+      final db = await openDatabase(path, readOnly: true);
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+      );
+      final tableNames = tables.map((t) => t['name'] as String).toSet();
+      await db.close();
+      
+      if (!tableNames.contains(LBDb.tDeviceWaypoints)) {
+        _log('WARN', 'device_waypoints table missing - running migration');
+        await _runMigrationForTable();
+      } else {
+        _log('INFO', 'Database schema verified OK');
+      }
+    } catch (e) {
+      _log('ERROR', 'Migration check failed: $e');
+    }
+  }
+
+  Future<void> _runMigrationForTable() async {
+    final db = await this.db;
+    final version = await db.getVersion();
+    await _onUpgrade(db, version, LBDb.version);
+    _log('INFO', 'Migration completed to version ${LBDb.version}');
+  }
+
+  // ── Query Auto-Fallback ────────────────────────────────────────────────────
+  Future<List<LBSignal>> _fallbackQueryFromObservations({
+    required String signalType,
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    final conditions = <String>['signal_type = ?'];
+    final args = <dynamic>[signalType];
+    
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+    
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    return rows.map(LBSignal.fromMap).toList();
+  }
 
   Future<Database> get db async {
     if (_db != null) return _db!;
@@ -44,27 +160,30 @@ class LBDatabase {
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, LBDb.name);
 
-    // Check existing database version - delete if too old to migrate safely
+    // Check version and delete if too old - all in one open attempt
     try {
-      final db = await openDatabase(path, readOnly: true);
-      final oldVersion = await db.getVersion();
-      await db.close();
+      final existingDb = await openDatabase(path, readOnly: true);
+      final oldVersion = await existingDb.getVersion();
+      await existingDb.close();
       
       if (oldVersion < _minSupportedVersion) {
-        debugPrint('LB_DB: Old database version $oldVersion < $_minSupportedVersion, deleting to re-create');
+        _log('WARN', 'Old DB version $oldVersion < $_minSupportedVersion, deleting');
         await deleteDatabase(path);
       }
     } catch (e) {
       // Database doesn't exist or can't be opened - will create fresh
-      debugPrint('LB_DB: No existing database or error checking version: $e');
     }
 
-    return openDatabase(
+    // Single open with proper version
+    final db = await openDatabase(
       path,
       version: LBDb.version,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
+    
+    await _fixMigrations();
+    return db;
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -623,6 +742,29 @@ class LBDatabase {
     bool includeNeighbors = false,
     int limit = 500,
   }) async {
+    try {
+      return await _getCellTowersFromWaypoints(
+        minSeverity: minSeverity,
+        sinceMs: sinceMs,
+        includeNeighbors: includeNeighbors,
+        limit: limit,
+      );
+    } catch (e) {
+      _log('WARN', 'getCellTowers failed, falling back to observations: $e');
+      return await _getCellTowersFromObservations(
+        includeNeighbors: includeNeighbors,
+        sinceMs: sinceMs,
+        limit: limit,
+      );
+    }
+  }
+
+  Future<List<CellTower>> _getCellTowersFromWaypoints({
+    int? minSeverity,
+    int? sinceMs,
+    bool includeNeighbors = false,
+    int limit = 500,
+  }) async {
     final database = await db;
     
     final conditions = <String>["signal_type = 'cell'"];
@@ -712,6 +854,79 @@ class LBDatabase {
         sinr:            (meta['sinr'] is num) ? (meta['sinr'] as num).toInt() : -20,
         firstSeen:       DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
+      );
+    }).toList();
+  }
+
+  Future<List<CellTower>> _getCellTowersFromObservations({
+    bool includeNeighbors = false,
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    final conditions = <String>[
+      includeNeighbors 
+        ? "signal_type IN ('cell', 'cell_neighbor')" 
+        : "signal_type = 'cell'"
+    ];
+    final args = <dynamic>[];
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    final byId = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final id = row['identifier'] as String;
+      if (!byId.containsKey(id)) {
+        byId[id] = {
+          'cell_key': id,
+          'display_name': row['display_name'],
+          'metadata_json': row['metadata_json'],
+          'rssi': row['rssi'],
+          'obs_count': 1,
+          'first_seen': row['ts'],
+          'last_seen': row['ts'],
+          'lat': row['lat'],
+          'lon': row['lon'],
+          'worst_flag': row['threat_flag'],
+        };
+      } else {
+        final existing = byId[id]!;
+        existing['obs_count'] = (existing['obs_count'] as int) + 1;
+        existing['last_seen'] = row['ts'];
+        existing['worst_flag'] = existing['worst_flag'] > (row['threat_flag'] as int) 
+            ? existing['worst_flag'] : row['threat_flag'];
+      }
+    }
+    return byId.values.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      return CellTower(
+        cellKey: row['cell_key'] as String,
+        displayName: row['display_name']?.toString() ?? '',
+        pci: (meta['pci'] is num) ? (meta['pci'] as num).toInt() : -1,
+        tac: (meta['tac'] is num) ? (meta['tac'] as num).toInt() : -1,
+        networkType: meta['network_type_name']?.toString() ?? meta['type']?.toString() ?? '?',
+        band: meta['band']?.toString(),
+        operator: meta['operator']?.toString(),
+        isServing: false,
+        position: LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
+        observationCount: row['obs_count'] as int,
+        worstThreat: 0,
+        worstThreatFlag: row['worst_flag'] as int,
+        rsrp: -120,
+        rsrq: -20,
+        sinr: -20,
+        firstSeen: DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
+        lastSeen: DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );
     }).toList();
   }
@@ -875,6 +1090,18 @@ class LBDatabase {
     int? sinceMs,
     int limit = 500,
   }) async {
+    try {
+      return await _getWifiDevicesFromWaypoints(sinceMs: sinceMs, limit: limit);
+    } catch (e) {
+      _log('WARN', 'getWifiDevices failed, falling back to observations: $e');
+      return await _getWifiDevicesFromObservations(sinceMs: sinceMs, limit: limit);
+    }
+  }
+
+  Future<List<WifiDevice>> _getWifiDevicesFromWaypoints({
+    int? sinceMs,
+    int limit = 500,
+  }) async {
     final database = await db;
     
     final conditions = <String>["signal_type = 'wifi'"];
@@ -930,8 +1157,82 @@ class LBDatabase {
     }).toList();
   }
 
+  Future<List<WifiDevice>> _getWifiDevicesFromObservations({
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    final conditions = <String>["signal_type = 'wifi'"];
+    final args = <dynamic>[];
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    final byId = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final id = row['identifier'] as String;
+      if (!byId.containsKey(id)) {
+        byId[id] = {
+          'bssid': id,
+          'ssid': row['display_name'],
+          'metadata_json': row['metadata_json'],
+          'rssi': row['rssi'],
+          'obs_count': 1,
+          'first_seen': row['ts'],
+          'last_seen': row['ts'],
+          'lat': row['lat'],
+          'lon': row['lon'],
+          'worst_flag': row['threat_flag'],
+          'vendor': '',
+        };
+      } else {
+        final existing = byId[id]!;
+        existing['obs_count'] = (existing['obs_count'] as int) + 1;
+        existing['last_seen'] = row['ts'];
+      }
+    }
+    return byId.values.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      return WifiDevice(
+        bssid: row['bssid'] as String,
+        ssid: row['ssid']?.toString() ?? '',
+        vendor: row['vendor'] as String? ?? '',
+        position: LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
+        observationCount: row['obs_count'] as int,
+        worstThreat: 0,
+        worstThreatFlag: row['worst_flag'] as int,
+        rssi: row['rssi'] as int,
+        channel: meta['channel'] is num ? (meta['channel'] as num).toInt() : null,
+        security: meta['capabilities']?.toString(),
+        firstSeen: DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
+        lastSeen: DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
+      );
+    }).toList();
+  }
+
   Future<List<BleDevice>> getBleDevices({
     int? minSeverity,
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    try {
+      return await _getBleDevicesFromWaypoints(sinceMs: sinceMs, limit: limit);
+    } catch (e) {
+      _log('WARN', 'getBleDevices failed, falling back to observations: $e');
+      return await _getBleDevicesFromObservations(sinceMs: sinceMs, limit: limit);
+    }
+  }
+
+  Future<List<BleDevice>> _getBleDevicesFromWaypoints({
     int? sinceMs,
     int limit = 500,
   }) async {
@@ -985,6 +1286,65 @@ class LBDatabase {
         txPower:         (meta['tx_power'] is num) ? (meta['tx_power'] as num).toInt() : null,
         firstSeen:       DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
         lastSeen:        DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
+      );
+    }).toList();
+  }
+
+  Future<List<BleDevice>> _getBleDevicesFromObservations({
+    int? sinceMs,
+    int limit = 500,
+  }) async {
+    final database = await db;
+    final conditions = <String>["signal_type = 'ble'"];
+    final args = <dynamic>[];
+    if (sinceMs != null) {
+      conditions.add('ts >= ?');
+      args.add(sinceMs);
+    }
+    final rows = await database.query(
+      LBDb.tObservations,
+      where: conditions.join(' AND '),
+      whereArgs: args,
+      orderBy: 'ts DESC',
+      limit: limit,
+    );
+    final byId = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final id = row['identifier'] as String;
+      if (!byId.containsKey(id)) {
+        byId[id] = {
+          'mac': id,
+          'display_name': row['display_name'],
+          'metadata_json': row['metadata_json'],
+          'rssi': row['rssi'],
+          'obs_count': 1,
+          'first_seen': row['ts'],
+          'last_seen': row['ts'],
+          'lat': row['lat'],
+          'lon': row['lon'],
+          'worst_flag': row['threat_flag'],
+        };
+      } else {
+        final existing = byId[id]!;
+        existing['obs_count'] = (existing['obs_count'] as int) + 1;
+        existing['last_seen'] = row['ts'];
+      }
+    }
+    return byId.values.map((row) {
+      final meta = row['metadata_json'] != null 
+          ? _parseJson(row['metadata_json'] as String)
+          : <String, dynamic>{};
+      return BleDevice(
+        mac: row['mac'] as String,
+        displayName: row['display_name']?.toString() ?? '',
+        position: LatLng((row['lat'] as num?)?.toDouble() ?? 0.0, (row['lon'] as num?)?.toDouble() ?? 0.0),
+        observationCount: row['obs_count'] as int,
+        worstThreat: 0,
+        worstThreatFlag: row['worst_flag'] as int,
+        rssi: row['rssi'] as int,
+        isTracker: meta['is_tracker'] is bool ? meta['is_tracker'] as bool : false,
+        firstSeen: DateTime.fromMillisecondsSinceEpoch((row['first_seen'] as num?)?.toInt() ?? 0),
+        lastSeen: DateTime.fromMillisecondsSinceEpoch((row['last_seen'] as num?)?.toInt() ?? 0),
       );
     }).toList();
   }
@@ -1431,5 +1791,154 @@ class LBDatabase {
       where: 'lat IS NULL AND lon IS NULL AND (geohash IS NULL OR geohash = "")',
     );
     debugPrint('LB_DB: Cleaned up $deleted observations without location');
+  }
+
+  // ── Spyware Detection Queries ─────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getSilentSms() async {
+    final database = await db;
+    try {
+      return await database.rawQuery('''
+        SELECT _id, address, date, body, type, seen, read
+        FROM sms
+        WHERE type = 0 AND seen = 0 AND read = 0
+        ORDER BY date DESC
+        LIMIT 100
+      ''');
+    } catch (e) {
+      _log('WARN', 'getSilentSms failed (SMS table may not exist): $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSmsExfiltrationPatterns() async {
+    final database = await db;
+    try {
+      return await database.rawQuery('''
+        SELECT address, COUNT(*) as count, GROUP_CONCAT(SUBSTR(body, 1, 50)) as recent_bodies
+        FROM sms
+        WHERE type = 2 AND address IS NOT NULL AND address != ''
+        AND date > ?
+        GROUP BY address
+        HAVING count >= 10
+        ORDER BY count DESC
+        LIMIT 10
+      ''', [DateTime.now().subtract(const Duration(hours: 24)).millisecondsSinceEpoch]);
+    } catch (e) {
+      _log('WARN', 'getSmsExfiltrationPatterns failed: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSuspiciousApps() async {
+    final database = await db;
+    final suspicious = <Map<String, dynamic>>[];
+    
+    try {
+      final packages = await database.rawQuery('''
+        SELECT package, permission_count, dangerous_permissions
+        FROM installed_apps
+        WHERE permission_count > 20
+        ORDER BY permission_count DESC
+        LIMIT 20
+      ''');
+      
+      for (final app in packages) {
+        final perms = (app['dangerous_permissions'] as String?)?.split(',') ?? [];
+        final hasCamera = perms.contains('android.permission.CAMERA');
+        final hasMic = perms.contains('android.permission.RECORD_AUDIO');
+        final hasLocation = perms.contains('android.permission.ACCESS_FINE_LOCATION');
+        final hasSms = perms.contains('android.permission.READ_SMS') || 
+                       perms.contains('android.permission.SEND_SMS');
+        
+        if ((hasCamera && hasMic && hasLocation) || (hasSms && hasLocation)) {
+          suspicious.add(app);
+        }
+      }
+    } catch (e) {
+      _log('WARN', 'getSuspiciousApps failed: $e');
+    }
+    
+    return suspicious;
+  }
+
+  Future<List<Map<String, dynamic>>> getCrossSessionTrackers({
+    int minGeohashCount = 2,
+    int? sinceMs,
+    int limit = 100,
+  }) async {
+    final database = await db;
+    
+    final since = sinceMs ?? DateTime.now().subtract(const Duration(days: 7)).millisecondsSinceEpoch;
+    
+    return database.rawQuery('''
+      SELECT 
+        identifier,
+        signal_type,
+        display_name,
+        COUNT(DISTINCT SUBSTR(geohash, 1, 7)) as geohash_count,
+        COUNT(*) as total_observations,
+        MIN(lat) as min_lat,
+        MAX(lat) as max_lat,
+        MIN(lon) as min_lon,
+        MAX(lon) as max_lon,
+        AVG(rssi) as avg_rssi,
+        MIN(first_seen) as first_seen,
+        MAX(last_seen) as last_seen,
+        MAX(threat_flag) as max_threat_flag,
+        metadata_json
+      FROM ${LBDb.tDeviceWaypoints}
+      WHERE signal_type = 'ble'
+        AND last_seen >= ?
+        AND identifier IN (
+          SELECT identifier 
+          FROM ${LBDb.tDeviceWaypoints}
+          WHERE signal_type = 'ble'
+            AND last_seen >= ?
+          GROUP BY identifier
+          HAVING COUNT(DISTINCT SUBSTR(geohash, 1, 7)) >= ?
+        )
+      GROUP BY identifier
+      ORDER BY total_observations DESC
+      LIMIT ?
+    ''', [since, since, minGeohashCount, limit]);
+  }
+
+  Future<List<Map<String, dynamic>>> getNearbyTrackers({
+    required double lat,
+    required double lon,
+    double radiusMeters = 100,
+    int? sinceMs,
+  }) async {
+    final database = await db;
+    
+    final since = sinceMs ?? DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch;
+    final latDelta = radiusMeters / 111320;
+    final lonDelta = radiusMeters / (111320 * math.cos(lat * math.pi / 180));
+    
+    return database.rawQuery('''
+      SELECT 
+        identifier,
+        display_name,
+        lat,
+        lon,
+        rssi_avg,
+        last_seen,
+        metadata_json,
+        threat_flag
+      FROM ${LBDb.tDeviceWaypoints}
+      WHERE signal_type = 'ble'
+        AND last_seen >= ?
+        AND lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+      ORDER BY rssi_avg DESC
+      LIMIT 50
+    ''', [
+      since,
+      lat - latDelta,
+      lat + latDelta,
+      lon - lonDelta,
+      lon + lonDelta,
+    ]);
   }
 }

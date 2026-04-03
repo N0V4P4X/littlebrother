@@ -175,11 +175,17 @@ class _ThreatCard extends StatelessWidget {
   }
 
   String _typeLabel(String type) => switch (type) {
-    LBThreatType.stingray   => 'IMSI CATCHER / STINGRAY',
-    LBThreatType.downgrade  => 'NETWORK DOWNGRADE',
-    LBThreatType.rogueAp    => 'ROGUE ACCESS POINT',
-    LBThreatType.bleTracker => 'BLE TRACKER',
-    LBThreatType.watchlist  => 'WATCHLIST HIT',
+    LBThreatType.stingray    => 'IMSI CATCHER / STINGRAY',
+    LBThreatType.downgrade   => 'NETWORK DOWNGRADE',
+    LBThreatType.rogueAp     => 'ROGUE ACCESS POINT',
+    LBThreatType.bleTracker  => 'BLE TRACKER',
+    LBThreatType.watchlist   => 'WATCHLIST HIT',
+    LBThreatType.silentSms   => 'SILENT SMS',
+    LBThreatType.smsExfil    => 'SMS EXFILTRATION',
+    LBThreatType.dnsAnomaly  => 'DNS ANOMALY',
+    LBThreatType.deviceComp  => 'DEVICE COMPROMISED',
+    LBThreatType.processAnom => 'PROCESS ANOMALY',
+    LBThreatType.deauthStorm => 'DEAUTH ATTACK',
     _                       => type.toUpperCase(),
   };
 }

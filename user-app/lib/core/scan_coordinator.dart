@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:littlebrother/alerts/alert_engine.dart';
 import 'package:littlebrother/analyzer/lb_analyzer.dart';
+import 'package:littlebrother/analyzer/spyware_detector.dart';
+import 'package:littlebrother/analyzer/deauth_detector.dart';
 import 'package:littlebrother/core/constants/lb_constants.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/db/oui_lookup.dart';
@@ -36,6 +38,8 @@ class ScanCoordinator {
   late final ShellScanner _shell;
   late final MqttScanner  _mqtt;
   late final BtClassicScanner _btClassic;
+  late final SpywareDetector _spywareDetector;
+  late final DeauthDetector _deauthDetector;
 
   // Merge stream: all signals from all scanners
   final _signalCtrl = StreamController<List<LBSignal>>.broadcast();
@@ -102,6 +106,8 @@ class ScanCoordinator {
     _cell     = CellScanner();
     _gps      = GpsTracker.instance;
     _analyzer = LBAnalyzer(_db);
+    _spywareDetector = SpywareDetector(_db);
+    _deauthDetector = DeauthDetector();
     _shell    = ShellScanner();
     // MQTT scanner disabled temporarily due to API complexity
     // _mqtt     = MqttScanner(
@@ -116,6 +122,12 @@ class ScanCoordinator {
       await _alerts.init();
       stderr.write('LB_COORD: alerts init done\n');
       debugPrint('LB_COORD alerts init done');
+      
+      // Route deauth findings to alert engine
+      _deauthDetector.findingsStream.listen((finding) async {
+        final event = finding.toThreatEvent();
+        await _alerts.handleThreatEvents([event]);
+      });
     } catch (e) {
       stderr.write('LB_COORD: alerts init failed (non-fatal): $e\n');
       debugPrint('LB_COORD alerts init failed (non-fatal): $e');
@@ -222,6 +234,7 @@ class ScanCoordinator {
       _wifiSub = _wifi.stream.listen(
         (List<LBSignal> signals) {
           debugPrint('LB_COORD wifi batch: ${signals.length} signals');
+          _deauthDetector.onWifiBatch(signals);
           _onSignals(signals);
         },
         onError: (e) {
@@ -257,11 +270,17 @@ class ScanCoordinator {
       stderr.write('LB_COORD: wifi scanner started, isRunning=${_wifi.isRunning}\n');
       debugPrint('LB_COORD wifi scanner started, isRunning=${_wifi.isRunning}');
 
+      // Start deauth monitoring after WiFi starts
+      _deauthDetector.startMonitoring();
+
       stderr.write('LB_COORD: starting ble scanner\n');
       debugPrint('LB_COORD starting ble scanner');
       await _ble.start(_sessionId!);
       stderr.write('LB_COORD: ble scanner started, isRunning=${_ble.isRunning}\n');
       debugPrint('LB_COORD ble scanner started, isRunning=${_ble.isRunning}');
+
+      // Start passive spyware monitoring
+      _spywareDetector.startPassiveMonitoring();
 
       if (LBPlatform.supportsCellScanning) {
         stderr.write('LB_COORD: starting cell scanner\n');
@@ -349,6 +368,10 @@ class ScanCoordinator {
       stderr.write('LB_COORD: stopping Bluetooth Classic scanner\n');
       await _btClassic.stop();
     }
+
+    // Stop passive spyware monitoring
+    _spywareDetector.stopPassiveMonitoring();
+    _deauthDetector.stopMonitoring();
     
     if (LBPlatform.supportsWakeLock) {
       await LBWakeLock.release();
@@ -501,6 +524,10 @@ class ScanCoordinator {
   
   OpsecController get opsec => _opsec;
   
+  SpywareDetector get spywareDetector => _spywareDetector;
+  
+  DeauthDetector get deauthDetector => _deauthDetector;
+  
   void dispose() {
     stopScan();
     _wifi.dispose();
@@ -515,6 +542,8 @@ class ScanCoordinator {
     if (Platform.isLinux) {
       _btClassic.dispose();
     }
+    _spywareDetector.dispose();
+    _deauthDetector.dispose();
     _signalCtrl.close();
   }
 }

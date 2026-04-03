@@ -45,11 +45,17 @@ class SignalPoint {
 }
 
 class LBThreatType {
-  static const stingray   = 'stingray';
-  static const rogueAp    = 'rogue_ap';
-  static const bleTracker = 'ble_tracker';
-  static const downgrade  = 'downgrade';
-  static const watchlist  = 'watchlist_hit';
+  static const stingray     = 'stingray';
+  static const rogueAp      = 'rogue_ap';
+  static const bleTracker   = 'ble_tracker';
+  static const downgrade   = 'downgrade';
+  static const watchlist   = 'watchlist_hit';
+  static const silentSms   = 'silent_sms';
+  static const smsExfil    = 'sms_exfiltration';
+  static const dnsAnomaly  = 'dns_anomaly';
+  static const deviceComp  = 'device_compromised';
+  static const processAnom = 'process_anomaly';
+  static const deauthStorm = 'deauth_storm';
 }
 
 class LBThreatFlag {

@@ -1,8 +1,8 @@
 # LittleBrother
 
-Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · Evasion Automation
+Passive RF intelligence platform — Wi-Fi · BLE · Cellular · SIGINT · CounterSurveillance
 
-Version: 0.7.2 (2026-04-02)
+Version: 0.8.0 (2026-04-03)
 
 > **Platform**: Android primary · Linux desktop · iOS/macOS/Windows planned
 
@@ -671,7 +671,9 @@ Integration will begin once Gridland stabilizes beyond v0.
 
 ---
 
-## Phase Completion Status
+## Phase Completion Status (v0.8.x)
+
+### v0.7.x (Current)
 
 - [x] **P1** — Flutter scaffold, SQLite schema, platform channels, permission flow
 - [x] **P1** — Radar HUD (CustomPainter, animated sweep, blips, threat flash)
@@ -697,11 +699,40 @@ Integration will begin once Gridland stabilizes beyond v0.
 - [x] **P7 partial** — iOS files (Info.plist, entitlements, Podfile) with graceful degradation
 - [ ] **P7** — iOS port (full graceful degradation)
 - [ ] **P7** — macOS / Windows port
-- [ ] **P8** — P25 / LMR scanner (RTL-SDR + dsd-neo NDK build)
-- [ ] **P8** — ADS-B aircraft tracker (RTL-SDR + Mode S decoder)
-- [ ] **P8** — Flipper Zero integration (sub-GHz RX + Bluetooth bridge)
-- [ ] **P8** — FM RDS emergency broadcast detection
-- [x] **P9** — Device Intel Map (geohash grid, mobile/stationary classification, cell detail)
+
+### v0.8.x (CounterSurveillance Suite)
+
+#### Phase 1: CounterSurveillance Detection
+- [ ] **P8.1** — Deauth Storm Detector (monitor deauth floods, log evidence)
+- [ ] **P8.2** — Enhanced Rogue AP heuristics (evil twin, karma, SSID clones)
+- [ ] **P8.3** — EAPOL Handshake Monitor (detect capture attempts)
+- [ ] **P8.4** — PMKID Harvesting Detection (alert on RSN PMKID IE)
+- [ ] **P8.5** — Probe Request Collector (capture, store, correlate SSIDs)
+- [ ] **P8.6** — AirTag/SmartTag Detector (AirTag, Tile, Galaxy SmartTag)
+- [ ] **P8.7** — Enhanced BLE Tracking Alert (cross-session device correlation)
+- [ ] **P8.8** — Silent SMS Detection (class 0 SMS monitor)
+
+#### Phase 2: Desktop Sync
+- [ ] **P8.9** — REST API server module (desktop endpoints)
+- [ ] **P8.10** — mDNS desktop discovery (local network auto-detect)
+- [ ] **P8.11** — Mobile→Desktop sync client (real-time signal streaming)
+- [ ] **P8.12** — Database merge layer (deduplication, source tracking)
+
+#### Phase 3: SDR Integration
+- [ ] **P8.13** — SDR subprocess adapter (dump1090, AIS-catcher, dsd-neo)
+- [ ] **P8.14** — ADS-B integration (aircraft tracking)
+- [ ] **P8.15** — AIS integration (maritime vessel tracking)
+- [ ] **P8.16** — P25/DMR integration (digital voice/LMR)
+
+#### Phase 4: Alert Channels + Headless
+- [ ] **P8.17** — Email alert module (SMTP)
+- [ ] **P8.18** — SMS alert module (Twilio)
+- [ ] **P8.19** — Webhook alert module (HTTP POST)
+- [ ] **P8.20** — Headless mode (CLI service)
+
+#### Future Phases
+- [ ] **P9** — Flipper Zero integration (sub-GHz RX + Bluetooth bridge)
+- [ ] **P9** — FM RDS emergency broadcast detection
 - [ ] **P9** — OpenStreetMap / DeFlock-style tile overlay for the Intel Map
 - [ ] **P9** — Threat modeling tools: classification rules, entity correlation, pattern-of-life analysis
 - [ ] **P9** — Hardware: LittleBrother RF device (VHF–SHF SDR, multi-band, open hardware)

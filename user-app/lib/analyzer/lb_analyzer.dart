@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:littlebrother/core/constants/lb_constants.dart';
+import 'package:littlebrother/core/data/known_wifi_networks.dart';
 import 'package:littlebrother/core/db/lb_database.dart';
 import 'package:littlebrother/core/models/lb_signal.dart';
 
@@ -223,45 +225,107 @@ class LBAnalyzer {
   ) async {
     var score = 0;
     final evidence = <String, dynamic>{};
-
-    // H1 — SSID collision (same SSID, different BSSID to known-good)
-    // Compare against DB-stored devices for this SSID
-    // (simplified: check if another AP in this scan has same SSID)
     final ssid = ap.metadata['ssid'] as String? ?? '';
+
+    // H1 — SSID collision (evil twin detection)
+    // Same SSID, different BSSID - could be legitimate AP or evil twin
     if (ssid.isNotEmpty) {
       final sameSSID = allWifi.where(
         (w) => w.metadata['ssid'] == ssid && w.identifier != ap.identifier
-      );
+      ).toList();
+      
       if (sameSSID.isNotEmpty) {
-        score += 25;
-        evidence['ssid_collision'] = {'detail': 'SSID "$ssid" seen on multiple BSSIDs'};
+        // Check if they're on different channels (more likely to be real)
+        final thisChannel = ap.metadata['channel'] as int? ?? 0;
+        final sameChannel = sameSSID.any((w) => w.metadata['channel'] == thisChannel);
+        
+        if (sameChannel) {
+          score += 40;
+          evidence['evil_twin'] = {
+            'detail': 'SSID "$ssid" on same channel from multiple BSSIDs - potential evil twin',
+            'count': sameSSID.length,
+            'channel': thisChannel,
+          };
+        } else {
+          score += 15;
+          evidence['ssid_collision'] = {'detail': 'SSID "$ssid" seen on multiple BSSIDs'};
+        }
       }
     }
 
-    // H2 — Open + risk score already computed in scanner
+    // H2 — Known privacy-breaking networks (captive portals, honeypots)
+    final privacyRisk = KnownPrivacyAps.checkSsid(ssid);
+    if (privacyRisk != PrivacyRisk.none) {
+      final riskPoints = privacyRisk == PrivacyRisk.honeypot ? 35 : 20;
+      score += riskPoints;
+      evidence['privacy_risk'] = {
+        'type': KnownPrivacyAps.riskName(privacyRisk),
+        'detail': 'Known ${KnownPrivacyAps.riskName(privacyRisk)} - $ssid',
+      };
+    }
+
+    // H3 — Likely spoofed home network
+    if (KnownPrivacyAps.isLikelySpoofedHome(ssid)) {
+      score += 25;
+      evidence['spoofed_home'] = {
+        'detail': 'SSID "$ssid" matches commonly spoofed home network patterns',
+      };
+    }
+
+    // H4 — Open network with no security
     score += ap.riskScore;
     if (ap.riskScore >= 40) {
       evidence['open_network'] = {'detail': 'Unencrypted or weak security (risk=${ap.riskScore})'};
     }
 
-    // H3 — OUI is consumer device (not AP vendor)
+    // H5 — OUI is consumer device (not AP vendor)
     final vendor = ap.metadata['vendor'] as String? ?? '';
     if (vendor.isNotEmpty && _isConsumerDeviceVendor(vendor)) {
       score += 20;
       evidence['consumer_oui'] = {'detail': 'BSSID OUI resolves to consumer device: $vendor'};
     }
 
+    // H6 — Hidden network (blank SSID) with strong signal
+    if (ssid.isEmpty && ap.rssi > -60) {
+      score += 15;
+      evidence['hidden_ssid'] = {'detail': 'Hidden SSID with strong signal (-${ap.rssi} dBm)'};
+    }
+
+    // H7 — Unusual channel for area
+    final channel = ap.metadata['channel'] as int? ?? 0;
+    if (channel >= 12 && channel <= 14) {
+      score += 10;
+      evidence['unusual_channel'] = {'detail': '2.4GHz channel $channel (unusual region?)'};
+    }
+
+    // H8 — Karma probe response detection
+    // An AP that responds to any probe request (including for non-existent SSIDs)
+    // is likely running karma/mana attack. We detect this by checking for
+    // a very high number of unique SSIDs seen in a short time from same BSSID
+    // (This would require tracking across sessions - marking as future enhancement)
+    evidence['karma_detection'] = {
+      'detail': 'Multi-SSID probe response detection (requires historical analysis)',
+      'note': 'Enable probe request logging for full karma detection',
+    };
+
     if (score < 40) return null;
 
     return LBThreatEvent(
       threatType: LBThreatType.rogueAp,
-      severity:   score >= 70 ? LBSeverity.high : LBSeverity.medium,
+      severity:   _rogueApSeverity(score),
       identifier: ap.identifier,
       evidence:   {'composite_score': score, 'heuristics': evidence},
       lat:        ap.lat,
       lon:        ap.lon,
       timestamp:  ap.timestamp,
     );
+  }
+
+  int _rogueApSeverity(int score) {
+    if (score >= 80) return LBSeverity.critical;
+    if (score >= 60) return LBSeverity.high;
+    if (score >= 40) return LBSeverity.medium;
+    return LBSeverity.low;
   }
 
   bool _isConsumerDeviceVendor(String vendor) {
@@ -279,7 +343,7 @@ class LBAnalyzer {
     final evidence = <String, dynamic>{};
     final trackerType = ble.metadata['tracker_type'] as String?;
 
-    // H1 — Known tracker signature
+    // H1 — Known tracker signature (AirTag, SmartTag, Tile, etc.)
     if (trackerType != null) {
       score += 60;
       evidence['known_tracker'] = {'type': trackerType, 'detail': 'Matches $trackerType advertising signature'};
@@ -293,27 +357,68 @@ class LBAnalyzer {
     }
 
     // H3 — Persistent follower: check if seen across multiple geohash locations
-    // (Requires DB query — simplified for P1, full implementation in P3)
+    try {
+      final crossSession = await _db.getCrossSessionTrackers(
+        minGeohashCount: 2,
+        sinceMs: DateTime.now().subtract(const Duration(days: 7)).millisecondsSinceEpoch,
+      );
+      final thisDevice = crossSession.where((d) => d['identifier'] == ble.identifier).firstOrNull;
+      if (thisDevice != null) {
+        final geohashCount = thisDevice['geohash_count'] as int? ?? 0;
+        final obsCount = thisDevice['total_observations'] as int? ?? 0;
+        if (geohashCount >= 2) {
+          score += 50;
+          evidence['persistent_follower'] = {
+            'geohash_count': geohashCount,
+            'observation_count': obsCount,
+            'detail': 'Device seen at $geohashCount different locations - possible tracking',
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('LB_ANALYZER: Cross-session tracker check failed: $e');
+    }
 
-    // H4 — Unrecognized manufacturer + no services
+    // H4 — Unrecognized manufacturer + no services (potentially covert)
     final vendor = ble.metadata['vendor'] as String? ?? '';
     final services = (ble.metadata['service_uuids'] as List?)?.length ?? 0;
     if (vendor.isEmpty && services == 0) {
       score += 15;
-      evidence['covert_device'] = {'detail': 'No OUI match, no service UUIDs'};
+      evidence['covert_device'] = {'detail': 'No OUI match, no service UUIDs - possibly hidden tracker'};
+    }
+
+    // H5 — Very close distance + sustained presence
+    final distanceM = ble.distanceM;
+    if (distanceM != null && distanceM < 2.0) {
+      score += 25;
+      evidence['close_proximity'] = {'distance_m': distanceM, 'detail': 'Device within 2m - very close proximity'};
+    }
+
+    // H6 — Random MAC with unknown vendor (typical of AirTags)
+    final isRandomized = ble.metadata['is_randomized_mac'] as bool? ?? false;
+    if (isRandomized && vendor.isEmpty && trackerType == null) {
+      score += 20;
+      evidence['randomized_unknown'] = {'detail': 'Randomized MAC with no vendor info - potential AirTag-like device'};
     }
 
     if (score < 30) return null;
 
     return LBThreatEvent(
       threatType: LBThreatType.bleTracker,
-      severity:   score >= 60 ? LBSeverity.high : LBSeverity.medium,
+      severity:   _bleTrackerSeverity(score),
       identifier: ble.identifier,
       evidence:   {'composite_score': score, 'heuristics': evidence},
       lat:        ble.lat,
       lon:        ble.lon,
       timestamp:  ble.timestamp,
     );
+  }
+
+  int _bleTrackerSeverity(int score) {
+    if (score >= 80) return LBSeverity.critical;
+    if (score >= 60) return LBSeverity.high;
+    if (score >= 40) return LBSeverity.medium;
+    return LBSeverity.low;
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────

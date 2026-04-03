@@ -129,7 +129,7 @@ class AlertEngine {
       await _notifs.show(
         event.hashCode.abs() % 10000,
         _notifTitle(event),
-        _notifBody(event),
+        getNotificationBody(event),
         NotificationDetails(android: androidDetails, iOS: iosDetails),
       );
     } catch (e) {
@@ -145,23 +145,132 @@ class AlertEngine {
       _                   => '🟡 ALERT',
     };
     return switch (event.threatType) {
-      LBThreatType.stingray   => '$prefix — IMSI Catcher Detected',
-      LBThreatType.downgrade  => '$prefix — Network Downgrade',
-      LBThreatType.rogueAp    => '$prefix — Rogue Access Point',
-      LBThreatType.bleTracker => '$prefix — BLE Tracker Detected',
-      _                       => '$prefix — ${event.threatType}',
+      LBThreatType.stingray    => '$prefix — IMSI Catcher Detected',
+      LBThreatType.downgrade   => '$prefix — Network Downgrade',
+      LBThreatType.rogueAp     => _rogueApTitle(event, prefix),
+      LBThreatType.bleTracker  => _bleTrackerTitle(event, prefix),
+      LBThreatType.silentSms   => '$prefix — Silent SMS Detected',
+      LBThreatType.smsExfil    => '$prefix — SMS Exfiltration Detected',
+      LBThreatType.dnsAnomaly  => '$prefix — Suspicious DNS Query',
+      LBThreatType.deviceComp  => '$prefix — Device May Be Compromised',
+      LBThreatType.processAnom => '$prefix — Suspicious Process',
+      LBThreatType.deauthStorm => '$prefix — Deauth Attack Detected',
+      _                        => '$prefix — ${event.threatType}',
     };
   }
 
-  String _notifBody(LBThreatEvent event) {
+  String _bleTrackerTitle(LBThreatEvent event, String prefix) {
+    final heuristics = event.evidence['heuristics'] as Map<String, dynamic>?;
+    final knownTracker = heuristics?['known_tracker'] as Map<String, dynamic>?;
+    final trackerType = knownTracker?['type'] as String?;
+    
+    if (trackerType != null) {
+      return '$prefix — $trackerType Detected';
+    }
+    
+    final persistent = heuristics?['persistent_follower'] as Map<String, dynamic>?;
+    if (persistent != null) {
+      return '$prefix — Tracking Device Following You';
+    }
+    
+    return '$prefix — BLE Tracker Detected';
+  }
+
+  String _rogueApTitle(LBThreatEvent event, String prefix) {
+    final heuristics = event.evidence['heuristics'] as Map<String, dynamic>?;
+    
+    if (heuristics?['evil_twin'] != null) {
+      return '$prefix — Evil Twin Detected';
+    }
+    if (heuristics?['privacy_risk'] != null) {
+      final riskType = heuristics!['privacy_risk'] as Map<String, dynamic>;
+      return '$prefix — ${riskType['type']} Detected';
+    }
+    if (heuristics?['spoofed_home'] != null) {
+      return '$prefix — Spoofed Home Network';
+    }
+    if (heuristics?['karma_detection'] != null) {
+      return '$prefix — Karma Probe Response';
+    }
+    
+    return '$prefix — Rogue Access Point';
+  }
+
+  String getNotificationBody(LBThreatEvent event) {
     final score = event.evidence['composite_score'];
     return switch (event.threatType) {
-      LBThreatType.stingray   => 'Cell ${event.identifier} — IMSI catcher signatures (score: $score)',
-      LBThreatType.downgrade  => '${event.evidence['detail'] ?? 'Network type degraded'}',
-      LBThreatType.rogueAp    => 'AP ${event.identifier} — rogue AP signatures',
-      LBThreatType.bleTracker => 'Device ${event.identifier} — tracking device detected',
-      _                       => event.identifier,
+      LBThreatType.stingray    => 'Cell ${event.identifier} — IMSI catcher signatures (score: $score)',
+      LBThreatType.downgrade   => '${event.evidence['detail'] ?? 'Network type degraded'}',
+      LBThreatType.rogueAp     => _rogueApBody(event),
+      LBThreatType.bleTracker  => _bleTrackerBody(event),
+      LBThreatType.silentSms   => 'Hidden class 0 SMS from ${event.identifier}',
+      LBThreatType.smsExfil    => '${event.evidence['count'] ?? 'Multiple'} SMS sent to unknown recipient',
+      LBThreatType.dnsAnomaly  => 'Query to ${event.identifier} matches known malware domain',
+      LBThreatType.deviceComp  => event.evidence['detail'] ?? 'Security compromise indicators detected',
+      LBThreatType.processAnom => 'Suspicious process: ${event.identifier}',
+      LBThreatType.deauthStorm => '${event.evidence['detail'] ?? 'Wireless deauthentication attack detected'}',
+      _                        => event.identifier,
     };
+  }
+
+  String _rogueApBody(LBThreatEvent event) {
+    final heuristics = event.evidence['heuristics'] as Map<String, dynamic>? ?? {};
+    final score = event.evidence['composite_score'];
+    final parts = <String>[];
+    
+    if (heuristics['evil_twin'] != null) {
+      final et = heuristics['evil_twin'] as Map<String, dynamic>;
+      parts.add('Evil twin: ${et['count'] ?? 1} APs with same SSID');
+    }
+    if (heuristics['privacy_risk'] != null) {
+      final pr = heuristics['privacy_risk'] as Map<String, dynamic>;
+      parts.add('${pr['type']}: ${pr['detail'] ?? 'Known privacy risk'}');
+    }
+    if (heuristics['spoofed_home'] != null) {
+      parts.add('Spoofed home network pattern');
+    }
+    if (heuristics['consumer_oui'] != null) {
+      parts.add('Consumer device as AP');
+    }
+    if (heuristics['open_network'] != null) {
+      parts.add('Open/unencrypted network');
+    }
+    
+    if (parts.isEmpty) {
+      return 'AP ${event.identifier} - rogue AP (score: $score)';
+    }
+    
+    return parts.join(' • ');
+  }
+
+  String _bleTrackerBody(LBThreatEvent event) {
+    final heuristics = event.evidence['heuristics'] as Map<String, dynamic>? ?? {};
+    final knownTracker = heuristics['known_tracker'] as Map<String, dynamic>?;
+    final trackerType = knownTracker?['type'] as String?;
+    final persistent = heuristics['persistent_follower'] as Map<String, dynamic>?;
+    final closeProx = heuristics['close_proximity'] as Map<String, dynamic>?;
+    
+    final parts = <String>[];
+    
+    if (trackerType != null) {
+      parts.add('Known tracker type: $trackerType');
+    }
+    
+    if (persistent != null) {
+      final geohashCount = persistent['geohash_count'] ?? 0;
+      parts.add('Seen at $geohashCount locations');
+    }
+    
+    if (closeProx != null) {
+      parts.add('Very close proximity (${closeProx['distance_m']}m)');
+    }
+    
+    if (parts.isEmpty) {
+      final sc = event.evidence['composite_score'];
+      return 'Unknown BLE tracker detected - score: $sc';
+    }
+    
+    return parts.join(' • ');
   }
 
   Color _severityColor(int severity) => switch (severity) {
